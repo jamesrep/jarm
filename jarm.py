@@ -17,6 +17,7 @@
 
 # Forked by:
 # James Dickson, wallparse@gmail.com
+# - Fixed a minor bug and added matching function.
 
 from __future__ import print_function
 
@@ -40,10 +41,11 @@ parser.add_argument("-V", "--version", help="Print out version and exit.", actio
 parser.add_argument("-o", "--output", help="Provide a filename to output/append results to a CSV file.", type=str)
 parser.add_argument("-j", "--json", help="Output ndjson (either to file or stdout; overrides --output defaults to CSV)", action="store_true")
 parser.add_argument("-P", "--proxy", help="To use a SOCKS5 proxy, provide address:port.", type=str)
+parser.add_argument("-m", "--match", help="Try to match the fingerprint signature in fingerprint.txt", action="store_true")
 args = parser.parse_args()
 
 if args.version:
-    print("JARM-fork - 2021")
+    print("JARMyx - Yet another JARM Fork - 2021...")
     exit()
 if not (args.scan or args.input):
     parser.error("A domain/IP to scan or an input file is required.")
@@ -471,7 +473,7 @@ def ParseNumber(number):
     else:
         return int(number)
 
-def main():
+def main(dctFingerprints):
     #Select the packets and formats to send
     #Array format = [destination_host,destination_port,version,cipher_list,cipher_order,GREASE,RARE_APLN,1.3_SUPPORT,extension_orders]
     tls1_2_forward = [destination_host, destination_port, "TLS_1.2", "ALL", "FORWARD", "NO_GREASE", "APLN", "1.2_SUPPORT", "REVERSE"]
@@ -510,11 +512,20 @@ def main():
             jarm += ","
     #Fuzzy hash
     result = jarm_hash(jarm)
+    objMatch = None
+    strMatch = ""
+
+    if dctFingerprints != None:
+        if(result.lower() in dctFingerprints):
+            objMatch = dctFingerprints[result.lower()]
+            strMatch = ',"guess":"' + objMatch["guess"] + '"' # Yes... refactor this odd code
+
+    # James: TODO: yea...refactor this bit...
     #Write to file
     if args.output:
         if ip != None:
             if args.json:
-                file.write('{"host":"' + destination_host + '","ip":"' + ip + '","result":"' + result + '"')
+                file.write('{"host":"' + destination_host + '","ip":"' + ip + '","result":"' + result + '"' + strMatch)
             else:
                 file.write(destination_host + "," + ip + "," + result)
         else:
@@ -532,7 +543,7 @@ def main():
     else:
         if ip != None:
             if args.json:
-                sys.stdout.write('{"host":"' + destination_host + '","ip":"' + ip + '","result":"' + result + '"')
+                sys.stdout.write('{"host":"' + destination_host + '","ip":"' + ip + '","result":"' + result + '"' + strMatch)
             else:
                 print("Domain: " + destination_host)
                 print("Resolved IP: " + ip)
@@ -595,6 +606,29 @@ if args.output:
         else:
             output_file = args.output
     file = open(output_file, "a+")
+
+# Fill the fingerprint dictionary
+dctFingerprints = {}
+if args.match:
+    strFingerpath = os.path.dirname( os.path.abspath(__file__)) + os.path.sep + "fingerprints.txt"
+    if(os.path.exists(strFingerpath)):
+        print("[+] Reading fingerprints from ", strFingerpath)
+        match_file = open(strFingerpath, "r")
+        strMatchLines = match_file.readlines()
+
+        for strLine in strMatchLines:
+            strClean = strLine.strip()
+            strSplitted = strClean.split(',')
+            strKey = strSplitted[0].lower()
+
+            if(strKey in dctFingerprints):
+                dctFingerprints[strKey]["guess"] = dctFingerprints[strKey]["guess"] + "," + strSplitted[1]
+            else:
+                objVal = {"guess":strSplitted[1], "added":strSplitted[2]}
+                dctFingerprints[strKey] = objVal
+    else:
+        print("[-] Error: The fingerprint file requested does not exist (", strFingerpath, ")")
+
 if args.input:
     input_file = open(args.input, "r")
     entries = input_file.readlines()
@@ -605,9 +639,9 @@ if args.input:
             destination_host = port_check[0]
         else:
             destination_host = port_check[0].strip() # James - 2021-07-21 - Fixing this bug - previously: entry[:-1]
-        main()
+        main(dctFingerprints)
 else:
-    main()
+    main(dctFingerprints)
 #Close files
 if args.output:
     file.close()
