@@ -1,4 +1,6 @@
-# JARM  
+# JARM  - Fork
+
+James 2021-07-21 - Forked this project to fix a small but annoying bug... 
   
 Please read the initial [JARM blog post](https://engineering.salesforce.com/easily-identify-malicious-servers-on-the-internet-with-jarm-e095edac525a) for more information.
   

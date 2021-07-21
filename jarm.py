@@ -14,6 +14,10 @@
 # Licensed under the BSD 3-Clause license.
 # For full license text, see LICENSE.txt file in the repo root or https://opensource.org/licenses/BSD-3-Clause
 #
+
+# Forked by:
+# James Dickson, wallparse@gmail.com
+
 from __future__ import print_function
 
 import codecs
@@ -37,8 +41,9 @@ parser.add_argument("-o", "--output", help="Provide a filename to output/append 
 parser.add_argument("-j", "--json", help="Output ndjson (either to file or stdout; overrides --output defaults to CSV)", action="store_true")
 parser.add_argument("-P", "--proxy", help="To use a SOCKS5 proxy, provide address:port.", type=str)
 args = parser.parse_args()
+
 if args.version:
-    print("JARM version 1.0")
+    print("JARM-fork - 2021")
     exit()
 if not (args.scan or args.input):
     parser.error("A domain/IP to scan or an input file is required.")
@@ -66,12 +71,14 @@ def packet_building(jarm_details):
     elif jarm_details[2] == "TLS_1.2":
         payload += b"\x03\x03"
         client_hello = b"\x03\x03"
+    
     #Random values in client hello
     client_hello += os.urandom(32)
     session_id = os.urandom(32)
     session_id_length = struct.pack(">B", len(session_id))
     client_hello += session_id_length
     client_hello += session_id
+    
     #Get ciphers
     cipher_choice = get_ciphers(jarm_details)
     client_suites_length = struct.pack(">H", len(cipher_choice))
@@ -597,7 +604,7 @@ if args.input:
             destination_port = int(port_check[1][:-1])
             destination_host = port_check[0]
         else:
-            destination_host = entry[:-1]
+            destination_host = port_check[0].strip() # James - 2021-07-21 - Fixing this bug - previously: entry[:-1]
         main()
 else:
     main()
