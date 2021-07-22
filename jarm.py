@@ -15,8 +15,7 @@
 # For full license text, see LICENSE.txt file in the repo root or https://opensource.org/licenses/BSD-3-Clause
 #
 
-# Forked by:
-# James Dickson, wallparse@gmail.com
+# Forked by James Dickson, wallparse@gmail.com
 # - Fixed a minor bug and added matching function.
 
 from __future__ import print_function
@@ -30,6 +29,7 @@ import random
 import argparse
 import hashlib
 import ipaddress
+import json # James added this to be able to use json objects instead of string concats.
 
 parser = argparse.ArgumentParser(description="Enter an IP address and port to scan.")
 group = parser.add_mutually_exclusive_group()
@@ -513,53 +513,52 @@ def main(dctFingerprints):
     #Fuzzy hash
     result = jarm_hash(jarm)
     objMatch = None
-    strMatch = ""
+    strBestGuess = ""
 
+    # Find a match if we have a fingerprint-list
     if dctFingerprints != None:
         if(result.lower() in dctFingerprints):
             objMatch = dctFingerprints[result.lower()]
-            strMatch = ',"guess":"' + objMatch["guess"] + '"' # Yes... refactor this odd code
+            strBestGuess = objMatch["guess"]
 
-    # James: TODO: yea...refactor this bit...
-    #Write to file
+    # Replacing string concats
+    jsonOutput = { "host":destination_host, "ip":ip, "result":result, "fuzzy":jarm, "guess":strBestGuess}
+    strOutput = json.dumps(jsonOutput)
+
+    #Write to file    
     if args.output:
         if ip != None:
             if args.json:
-                file.write('{"host":"' + destination_host + '","ip":"' + ip + '","result":"' + result + '"' + strMatch)
+                file.write(strOutput)
             else:
                 file.write(destination_host + "," + ip + "," + result)
         else:
             file.write(destination_host + ",Failed to resolve IP," + result)
+            
         #Verbose mode adds pre-fuzzy-hashed JARM
         if args.verbose:
-            if args.json:
-                file.write(',"jarm":"' + jarm + '"')
-            else:
+            if  args.json != True:
                 file.write("," + jarm)
-        if args.json:
-            file.write("}")
         file.write("\n")
     #Print to STDOUT
     else:
         if ip != None:
             if args.json:
-                sys.stdout.write('{"host":"' + destination_host + '","ip":"' + ip + '","result":"' + result + '"' + strMatch)
+                sys.stdout.write(strOutput)
             else:
                 print("Domain: " + destination_host)
                 print("Resolved IP: " + ip)
                 print("JARM: " + result)
         else:
             if args.json:
-                sys.stdout.write('{"host":"' + destination_host + '","ip":null,"result":"' + result + '"')
+                sys.stdout.write(strOutput)
             else:
                 print("Domain: " + destination_host)
                 print("Resolved IP: IP failed to resolve.")
                 print("JARM: " + result)
         #Verbose mode adds pre-fuzzy-hashed JARM
         if args.verbose:
-            if args.json:
-                sys.stdout.write(',"jarm":"' + jarm + '"')
-            else:
+            if args.json != True:
                 scan_count = 1
                 for round in jarm.split(","):
                     print("Scan " + str(scan_count) + ": " + round, end="")
@@ -569,8 +568,7 @@ def main(dctFingerprints):
                         print(",")
                     scan_count += 1
         if args.json:
-            sys.stdout.write("}\n")
-
+            sys.stdout.write("\n")
 
 #set proxy
 if args.proxy:
