@@ -15,10 +15,13 @@
 # For full license text, see LICENSE.txt file in the repo root or https://opensource.org/licenses/BSD-3-Clause
 #
 
-# Forked by James Dickson, wallparse@gmail.com
+# 2021-07-21 - Forked by James D, wallparse@gmail.com
 # - Fixed a minor bug and added matching function.
 # - Refactored to simplify new features, trying to keep as much of the original structure as possible.
 # - Added Elasticsearch output feature
+# - Added Elasticsearch input feature
+#
+# This fork can fetch the hosts to test from one elasticsearch index and output to another elasticsearch index.
 
 from __future__ import print_function
 
@@ -36,6 +39,47 @@ from datetime import datetime
 from elasticsearch import Elasticsearch
 from elasticsearch.connection import create_ssl_context
 import re
+
+# Returns the result from the elasticsearch-query
+def fetchInputFromElastic(args, esInput, strInputField, strInputTime, maxSize):
+
+    # We return 1 result from the query just for debugging and the rest will be for the aggregation.
+    esquery_agg =  {
+        "size" : 1,
+        "aggs": {
+            "thefields": {
+                "terms": { 
+                    "field": strInputField,
+                    "size": maxSize,
+                }
+            }
+        },        
+        "query": 
+            {
+                "query_string": {
+                    "query": args.elasticinputquery,                    
+                    "default_field": strInputField
+                }
+            }
+        }
+
+    result = esInput.search(index=args.elasticinputindex, body=esquery_agg)
+
+    
+    if result != None:
+        thefields = result["aggregations"]["thefields"]["buckets"]
+        
+        lstToReturn = []
+        beginBucket = 0
+        flen = len(thefields)
+
+        while beginBucket < flen:
+            lstToReturn.append(thefields[beginBucket]["key"]) 
+            beginBucket = beginBucket +1
+        
+        return lstToReturn
+
+    return None
 
 def ingestElasticsearch(esConnection, esIndex, esDocument, strTimefield):
     print("[+] shipping to elasticsearch index", esIndex)
@@ -602,50 +646,7 @@ def checkJarmForHost(dctFingerprints, args, destination_host, destination_port, 
         if args.json:
             sys.stdout.write("\n")
 
-def main():
-    parser = argparse.ArgumentParser(description="Enter an IP address and port to scan.")
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument("scan", nargs='?', help="Enter an IP or domain to scan.")
-    group.add_argument("-i", "--input", help="Provide a list of IP addresses or domains to scan, one domain or IP address per line.  Optional: Specify port to scan with comma separation (e.g. 8.8.4.4,853).", type=str)
-    parser.add_argument("-p", "--port", help="Enter a port to scan (default 443).", type=int)
-    parser.add_argument("-v", "--verbose", help="Verbose mode: displays the JARM results before being hashed.", action="store_true")
-    parser.add_argument("-V", "--version", help="Print out version and exit.", action="store_true")
-    parser.add_argument("-o", "--output", help="Provide a filename to output/append results to a CSV file.", type=str)
-    parser.add_argument("-j", "--json", help="Output ndjson (either to file or stdout; overrides --output defaults to CSV)", action="store_true")
-    parser.add_argument("-P", "--proxy", help="To use a SOCKS5 proxy, provide address:port.", type=str)
-    parser.add_argument("-m", "--match", help="Try to match the fingerprint signature in fingerprint.txt", action="store_true")
-    parser.add_argument("-e", "--elastichost", help="Use this elasticsearch host for output (default=127.0.0.1)", type=str)
-    parser.add_argument("--elasticindex", help="Use this elasticsearch index for output. Example: jarm-#yyyy#", type=str)
-    parser.add_argument("--elasticuser", help="Use this elasticsearch user (if required by the elastic server)", type=str)
-    parser.add_argument("--elasticpassword", help="Use this elasticsearch password (if required by the elastic server)", type=str)
-    parser.add_argument("--elastictls", help="Use if elasticsearch requires https (more common these days)", action="store_true")
-    parser.add_argument("--elasticskipcert", help="If specified no certificate validation occurs when connecting to elasticsearch", action="store_true")
-    parser.add_argument("--elasticport", help="If you have another port than 9200 for your elasticsearch then specify it here", type=int)
-    parser.add_argument("--elastictimefield", help="Set the timefield for elasticsearch (default=@timestamp)", type=str)
-    args = parser.parse_args()
-
-    if args.version:
-        print("JARMxy - Yet another JARM Fork - 2021...")
-        exit()
-    if not (args.scan or args.input):
-        parser.error("A domain/IP to scan or an input file is required.")
-
-
-    # Init variables
-    file =              None
-    destination_host =  args.scan
-    destination_port =  443
-    file_ext =          ".csv"
-    dctFingerprints =   {}    
-    proxyhost =         None
-    proxyport =         None 
-    esConnection =      None
-    strElasticTimestamp = "@timestamp"
-
-    # Elasticsearch settings
-    if args.elastichost and args.elasticindex == None:
-        exit("[-] Error: If you want elasticsearch output you also needs to specify the index for output.")    
-
+def createElasticConnection(args):
     # If requested write to elasticsearch index
     if args.elastichost != None :
         if(args.elastictls):
@@ -669,7 +670,129 @@ def main():
 
             esConnection = Elasticsearch(args.elastichost, verify_certs=bVerifyCerts, http_auth=(args.elasticuser, args.elasticpassword), scheme="https",port=elasticport)
         else:
-            esConnection = Elasticsearch(args.elastichost)            
+            esConnection = Elasticsearch(args.elastichost)  
+
+        return esConnection
+
+    return None    
+
+def checkForJarmAndWriteHistory(dctFingerprints, 
+                                args, 
+                                destination_host, 
+                                destination_port, 
+                                file, 
+                                proxyhost, 
+                                proxyport, 
+                                esConnection, 
+                                strElasticTimestamp, 
+                                historyFile, 
+                                bHistoryWritten, 
+                                dtNow):
+    checkJarmForHost(dctFingerprints, args, destination_host, destination_port, file, proxyhost, proxyport, esConnection, strElasticTimestamp)
+
+    if historyFile != None and bHistoryWritten == False:
+        strDateTime = dtNow.strftime("%Y-%m-%d %H:%M:%S")
+        historyFile.write(destination_host + "," + strDateTime + "\n")
+        historyFile.flush()
+        bHistoryWritten = True 
+
+    return True
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Enter an IP address and port to scan.")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("scan", nargs='?', help="Enter an IP or domain to scan.")
+    group.add_argument("-i", "--input", help="Provide a list of IP addresses or domains to scan, one domain or IP address per line.  Optional: Specify port to scan with comma separation (e.g. 8.8.4.4,853).", type=str)
+    parser.add_argument("-p", "--port", help="Enter a port to scan (default 443).", type=int)
+    parser.add_argument("-v", "--verbose", help="Verbose mode: displays the JARM results before being hashed.", action="store_true")
+    parser.add_argument("-V", "--version", help="Print out version and exit.", action="store_true")
+    parser.add_argument("-o", "--output", help="Provide a filename to output/append results to a CSV file.", type=str)
+    parser.add_argument("-j", "--json", help="Output ndjson (either to file or stdout; overrides --output defaults to CSV)", action="store_true")
+    parser.add_argument("-P", "--proxy", help="To use a SOCKS5 proxy, provide address:port.", type=str)
+    parser.add_argument("-m", "--match", help="Try to match the fingerprint signature in fingerprint.txt", action="store_true")
+
+    # Elastic output
+    parser.add_argument("-e", "--elastichost", help="Use this elasticsearch host for output (default=127.0.0.1)", type=str)
+    parser.add_argument("--elasticindex", help="Use this elasticsearch index for output. Example: jarm-#yyyy#", type=str)
+
+    # Elastic input
+    parser.add_argument("--elasticinputhost", help="Use this elasticsearch host for input (default=127.0.0.1)", type=str)
+    parser.add_argument("--elasticinputindex", help="Use this elasticsearch index for input.", type=str)
+    parser.add_argument("--elasticinputquery", help="Use this elasticsearch query to fetch the hosts", type=str)
+    #parser.add_argument("--elasticinputregex", help="Use this regular expression to carve out the hostnames/ip-addresses for each result from the elastic query", type=str)
+    parser.add_argument("--elasticinputfield", help="Use this elasticsearch input field where the hosts are stored (default=destination.domain)", type=str)
+    parser.add_argument("--elasticinputtimespan", help="Use this elasticsearch timespan for input (default=1h)", type=str)
+    parser.add_argument("--elasticinputmax", help="Use this to limit search result from elasticsearch (default=1000)", type=int)
+
+    # Elastic common for input/output
+    parser.add_argument("--elasticuser", help="Use this elasticsearch user (if required by the elastic server)", type=str)
+    parser.add_argument("--elasticpassword", help="Use this elasticsearch password (if required by the elastic server)", type=str)
+    parser.add_argument("--elastictls", help="Use if elasticsearch requires https (more common these days)", action="store_true")
+    parser.add_argument("--elasticskipcert", help="If specified no certificate validation occurs when connecting to elasticsearch", action="store_true")
+    parser.add_argument("--elasticport", help="If you have another port than 9200 for your elasticsearch then specify it here", type=int)
+    parser.add_argument("--elastictimefield", help="Set the timefield for elasticsearch (default=@timestamp)", type=str)
+
+    # Avoid lists
+    parser.add_argument("--avoid", help="Use this file for avoiding specific domains/ips", type=str)
+    parser.add_argument("--history", help="Use this file for avoid checking each host more than once (if none, then no history)", type=str)
+
+    args = parser.parse_args()    
+
+    if args.version:
+        print("JARMxy - Yet another JARM Fork - 2021... started: ", str(dtNow))
+        exit()
+    if not (args.scan or args.input or args.elasticinputhost):
+        parser.error("[-] Error: A domain/IP to scan or an input file is required.")
+
+
+    # Init variables
+    file =              None
+    destination_host =  args.scan
+    destination_port =  443
+    file_ext =          ".csv"
+    dctFingerprints =   {}    
+    proxyhost =         None
+    proxyport =         None 
+    esConnection =      None
+    strElasticTimestamp = "@timestamp"
+    lstElasticInput =   None
+    strElasticInputField = "destination.domain.keyword"
+    strElasticInputTime = "1h"
+    elasticInputMax =   1000                        # The maximum number of hosts to fetch from elasticsearch
+    lstAvoid =          []                          # Will receive the static avoid list
+    lstHistory =        []                          # Will receive the history list
+    dtNow =             datetime.now()              # Timestamp used for history-file
+
+    if args.elasticinputhost and args.elasticinputindex == None:
+        exit("[-] Error: If you want elasticsearch input you also needs to specify the index for input.")   
+
+    # Elasticsearch settings
+    if args.elastichost and args.elasticindex == None:
+        exit("[-] Error: If you want elasticsearch output you also needs to specify the index for output.")    
+
+    # If we want to query an elasticsearch cluster for the hosts to do the Jarm-check on.
+    if args.elasticinputhost and args.elasticinputindex != None:
+        if args.elasticinputfield != None:
+            strElasticInputField = args.elasticinputfield
+
+        if args.elasticinputtimespan != None:
+            strElasticInputTime = args.elasticinputtimespan    
+
+        if args.elasticinputmax != None:
+            elasticInputMax = args.elasticinputmax                  
+
+        print("[+] Fetching from elasticsearch...")
+        esInput = createElasticConnection(args)
+        lstElasticInput = fetchInputFromElastic(args, esInput, strElasticInputField, strElasticInputTime, elasticInputMax)
+
+        if lstElasticInput != None:
+            print("[+] Retrieved ", str(len(lstElasticInput)), " entries from elasticsearch")
+        else:
+            print("[-] Warning... the elasticsearch query did not result in any hits.")            
+
+    # If requested write to elasticsearch index
+    esConnection = createElasticConnection(args)
 
     #set proxy
     if args.proxy:
@@ -696,6 +819,29 @@ def main():
                 output_file = args.output
         file = open(output_file, "a+")
 
+    # Get the avoid-list
+    if args.avoid != None and (os.path.exists(args.avoid)):
+        avoidFile = open(args.avoid, "r")
+        lstAvoid = avoidFile.readlines()
+        avoidFile.close()
+
+    # Get the history-list
+    if args.history != None and (os.path.exists(args.history)):
+        historyFile = open(args.history, "r")
+        lstTemp = historyFile.readlines()
+
+        # Read line by line and remove the timestamp
+        for line in lstTemp:
+            lstHistory.append(line.split(",")[0])
+
+        historyFile.close()
+        historyFile = None
+        
+    if args.history != None : 
+        print("[+] using history file")   
+        historyFile = open(args.history, "a")
+
+
     # Fill the fingerprint dictionary    
     if args.match:
         strFingerpath = os.path.dirname( os.path.abspath(__file__)) + os.path.sep + "fingerprints.txt"
@@ -703,6 +849,7 @@ def main():
             print("[+] Reading fingerprints from ", strFingerpath)
             match_file = open(strFingerpath, "r")
             strMatchLines = match_file.readlines()
+            match_file.close()
 
             for strLine in strMatchLines:
                 strClean = strLine.strip()
@@ -717,6 +864,9 @@ def main():
         else:
             print("[-] Error: The fingerprint file requested does not exist (", strFingerpath, ")")
 
+    bHistoryWritten = False
+
+    # Input from file if requested
     if args.input:
         input_file = open(args.input, "r")
         entries = input_file.readlines()
@@ -727,13 +877,35 @@ def main():
                 destination_host = port_check[0]
             else:
                 destination_host = port_check[0].strip() # James - 2021-07-21 - Fixing this bug - previously: entry[:-1]
-            checkJarmForHost(dctFingerprints, args, destination_host, destination_port, file, proxyhost, proxyport, esConnection, strElasticTimestamp)
-    else:
-        checkJarmForHost(dctFingerprints, args, destination_host, destination_port, file, proxyhost, proxyport, esConnection, strElasticTimestamp)
+
+            if destination_host in lstAvoid or destination_host in lstHistory:
+                print("[+] Avoiding ", destination_host)
+            else:
+                checkForJarmAndWriteHistory(  dctFingerprints, args, destination_host, destination_port, file, proxyhost, proxyport, esConnection, strElasticTimestamp,historyFile, bHistoryWritten, dtNow)
+        bHistoryWritten = True                                            
+            
+
+    # The Elasticsearch input
+    if args.elasticinputhost:
+        for destination_host in lstElasticInput:
+            if destination_host in lstAvoid or destination_host in lstHistory:
+                print("[+] Avoiding ", destination_host)
+            else:            
+                checkForJarmAndWriteHistory(  dctFingerprints, args, destination_host, destination_port, file, proxyhost, proxyport, esConnection, strElasticTimestamp, historyFile, bHistoryWritten, dtNow)
+        bHistoryWritten = True
+
+    # The default, only one specific test (no avoid-lists here)
+    if args.input == None and args.elasticinputhost == None:
+        checkJarmForHost(dctFingerprints, args, destination_host, destination_port, file, proxyhost, proxyport, esConnection, strElasticTimestamp)  
 
     #Close files
     if args.output:
         file.close()
+    
+    if historyFile != None:
+        historyFile.close()
+
+    print("[+] Done!")
 
 # Old fashioned python syntax
 if __name__ == "__main__":    
