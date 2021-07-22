@@ -41,7 +41,13 @@ from elasticsearch.connection import create_ssl_context
 import re
 
 # Returns the result from the elasticsearch-query
-def fetchInputFromElastic(args, esInput, strInputField, strInputTime, maxSize):
+def fetchInputFromElastic(args, esInput, strInputField, strInputTime, maxSize, lstAvoidHosts):
+    strFinishedQuery = args.elasticinputquery
+
+    if len(lstAvoidHosts) > 0:
+        for ahost in lstAvoidHosts:
+            if(len(ahost) > 2):
+                strFinishedQuery += " AND NOT " + strInputField + ":\"" + ahost + "\""
 
     # We return 1 result from the query just for debugging and the rest will be for the aggregation.
     esquery_agg =  {
@@ -57,7 +63,7 @@ def fetchInputFromElastic(args, esInput, strInputField, strInputTime, maxSize):
         "query": 
             {
                 "query_string": {
-                    "query": args.elasticinputquery,                    
+                    "query": strFinishedQuery,                    
                     "default_field": strInputField
                 }
             }
@@ -735,6 +741,7 @@ def main():
 
     # Avoid lists
     parser.add_argument("--avoid", help="Use this file for avoiding specific domains/ips", type=str)
+    parser.add_argument("--avoidinquery", help="Use this file for avoiding specific domains/ips directly in the elastic query", type=str)
     parser.add_argument("--history", help="Use this file for avoid checking each host more than once (if none, then no history)", type=str)
 
     args = parser.parse_args()    
@@ -760,7 +767,7 @@ def main():
     strElasticInputField = "destination.domain.keyword"
     strElasticInputTime = "1h"
     elasticInputMax =   1000                        # The maximum number of hosts to fetch from elasticsearch
-    lstAvoid =          []                          # Will receive the static avoid list
+    lstAvoid =          []                          # Will receive the static avoid list    
     lstHistory =        []                          # Will receive the history list
     dtNow =             datetime.now()              # Timestamp used for history-file
 
@@ -780,11 +787,18 @@ def main():
             strElasticInputTime = args.elasticinputtimespan    
 
         if args.elasticinputmax != None:
-            elasticInputMax = args.elasticinputmax                  
+            elasticInputMax = args.elasticinputmax    
 
+        # Get the avoid-list for queries
+        lstAvoidInQuery =   []
+        if args.avoidinquery != None and (os.path.exists(args.avoidinquery)):
+            with open(args.avoidinquery,'r') as avoidInqueryFile:
+                for strHost in avoidInqueryFile.readlines():
+                    lstAvoidInQuery.append(strHost.strip())            
+                      
         print("[+] Fetching from elasticsearch...")
         esInput = createElasticConnection(args)
-        lstElasticInput = fetchInputFromElastic(args, esInput, strElasticInputField, strElasticInputTime, elasticInputMax)
+        lstElasticInput = fetchInputFromElastic(args, esInput, strElasticInputField, strElasticInputTime, elasticInputMax, lstAvoidInQuery)
 
         if lstElasticInput != None:
             print("[+] Retrieved ", str(len(lstElasticInput)), " entries from elasticsearch")
@@ -825,6 +839,7 @@ def main():
         lstAvoid = avoidFile.readlines()
         avoidFile.close()
 
+    
     # Get the history-list
     if args.history != None and (os.path.exists(args.history)):
         historyFile = open(args.history, "r")
