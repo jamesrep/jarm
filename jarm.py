@@ -17,6 +17,7 @@
 
 # Forked by James Dickson, wallparse@gmail.com
 # - Fixed a minor bug and added matching function.
+# - Refactored to simplify new features, trying to keep as much of the original structure as possible.
 
 from __future__ import print_function
 
@@ -31,24 +32,6 @@ import hashlib
 import ipaddress
 import json # James added this to be able to use json objects instead of string concats.
 
-parser = argparse.ArgumentParser(description="Enter an IP address and port to scan.")
-group = parser.add_mutually_exclusive_group()
-group.add_argument("scan", nargs='?', help="Enter an IP or domain to scan.")
-group.add_argument("-i", "--input", help="Provide a list of IP addresses or domains to scan, one domain or IP address per line.  Optional: Specify port to scan with comma separation (e.g. 8.8.4.4,853).", type=str)
-parser.add_argument("-p", "--port", help="Enter a port to scan (default 443).", type=int)
-parser.add_argument("-v", "--verbose", help="Verbose mode: displays the JARM results before being hashed.", action="store_true")
-parser.add_argument("-V", "--version", help="Print out version and exit.", action="store_true")
-parser.add_argument("-o", "--output", help="Provide a filename to output/append results to a CSV file.", type=str)
-parser.add_argument("-j", "--json", help="Output ndjson (either to file or stdout; overrides --output defaults to CSV)", action="store_true")
-parser.add_argument("-P", "--proxy", help="To use a SOCKS5 proxy, provide address:port.", type=str)
-parser.add_argument("-m", "--match", help="Try to match the fingerprint signature in fingerprint.txt", action="store_true")
-args = parser.parse_args()
-
-if args.version:
-    print("JARMyx - Yet another JARM Fork - 2021...")
-    exit()
-if not (args.scan or args.input):
-    parser.error("A domain/IP to scan or an input file is required.")
 
 #Randomly choose a grease value
 def choose_grease():
@@ -278,7 +261,7 @@ def supported_versions(jarm_details, grease):
     return ext
 
 #Send the assembled client hello using a socket
-def send_packet(packet):
+def send_packet(packet, destination_host, destination_port, proxyhost, proxyport):
     try:
         #Determine if the input is an IP or domain name
         try:
@@ -290,7 +273,7 @@ def send_packet(packet):
                 raw_ip = False
         #Connect the socket
         if ":" in destination_host:
-            if args.proxy:
+            if proxyhost != None:
                 sock = socks.socksocket(socket.AF_INET6, socket.SOCK_STREAM)
                 sock.set_proxy(socks.SOCKS5, proxyhost, proxyport)
             else:
@@ -299,7 +282,7 @@ def send_packet(packet):
             sock.settimeout(20)
             sock.connect((destination_host, destination_port, 0, 0))
         else:
-            if args.proxy:
+            if proxyhost != None:
                 sock = socks.socksocket(socket.AF_INET, socket.SOCK_STREAM)
                 sock.set_proxy(socks.SOCKS5, proxyhost, proxyport)
             else:
@@ -473,7 +456,7 @@ def ParseNumber(number):
     else:
         return int(number)
 
-def main(dctFingerprints):
+def checkJarmForHost(dctFingerprints, args, destination_host, destination_port, file, proxyhost, proxyport):
     #Select the packets and formats to send
     #Array format = [destination_host,destination_port,version,cipher_list,cipher_order,GREASE,RARE_APLN,1.3_SUPPORT,extension_orders]
     tls1_2_forward = [destination_host, destination_port, "TLS_1.2", "ALL", "FORWARD", "NO_GREASE", "APLN", "1.2_SUPPORT", "REVERSE"]
@@ -498,7 +481,7 @@ def main(dctFingerprints):
     iterate = 0
     while iterate < len(queue):
         payload = packet_building(queue[iterate])
-        server_hello, ip = send_packet(payload)
+        server_hello, ip = send_packet(payload, destination_host, destination_port, proxyhost, proxyport)
         #Deal with timeout error
         if server_hello == "TIMEOUT":
             jarm = "|||,|||,|||,|||,|||,|||,|||,|||,|||,|||"
@@ -570,76 +553,105 @@ def main(dctFingerprints):
         if args.json:
             sys.stdout.write("\n")
 
-#set proxy
-if args.proxy:
-    proxyhost, proxyport = args.proxy.split(':')
-    proxyport = ParseNumber(proxyport)
-    try:
-        import socks
-    except ImportError:
-        print('Option proxy requires PySocks: pip install PySocks')
+def main():
+    parser = argparse.ArgumentParser(description="Enter an IP address and port to scan.")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("scan", nargs='?', help="Enter an IP or domain to scan.")
+    group.add_argument("-i", "--input", help="Provide a list of IP addresses or domains to scan, one domain or IP address per line.  Optional: Specify port to scan with comma separation (e.g. 8.8.4.4,853).", type=str)
+    parser.add_argument("-p", "--port", help="Enter a port to scan (default 443).", type=int)
+    parser.add_argument("-v", "--verbose", help="Verbose mode: displays the JARM results before being hashed.", action="store_true")
+    parser.add_argument("-V", "--version", help="Print out version and exit.", action="store_true")
+    parser.add_argument("-o", "--output", help="Provide a filename to output/append results to a CSV file.", type=str)
+    parser.add_argument("-j", "--json", help="Output ndjson (either to file or stdout; overrides --output defaults to CSV)", action="store_true")
+    parser.add_argument("-P", "--proxy", help="To use a SOCKS5 proxy, provide address:port.", type=str)
+    parser.add_argument("-m", "--match", help="Try to match the fingerprint signature in fingerprint.txt", action="store_true")
+    args = parser.parse_args()
+
+    if args.version:
+        print("JARMxy - Yet another JARM Fork - 2021...")
         exit()
+    if not (args.scan or args.input):
+        parser.error("A domain/IP to scan or an input file is required.")
 
-#Set destination host and port
-destination_host = args.scan
-if args.port:
-    destination_port = int(args.port)
-else:
-    destination_port = 443
-#JSON output
-if args.json:
-    file_ext = ".json"
-else:
-    file_ext = ".csv"
-#File output option
-if args.output:
+
+    # Init variables
+    file =              None
+    destination_host =  args.scan
+    destination_port =  443
+    file_ext =          ".csv"
+    dctFingerprints =   {}    
+    proxyhost =         None
+    proxyport =         None    
+
+    #set proxy
+    if args.proxy:
+        proxyhost, proxyport = args.proxy.split(':')
+        proxyport = ParseNumber(proxyport)
+        try:
+            import socks
+        except ImportError:
+            print('Option proxy requires PySocks: pip install PySocks')
+            exit()
+
+    if args.port:
+        destination_port = int(args.port)
+
     if args.json:
-        if args.output[-5:] != file_ext:
-            output_file = args.output + file_ext
-        else:
-            output_file = args.output
-    else:
-        if args.output[-4:] != file_ext:
-            output_file = args.output + file_ext
-        else:
-            output_file = args.output
-    file = open(output_file, "a+")
-
-# Fill the fingerprint dictionary
-dctFingerprints = {}
-if args.match:
-    strFingerpath = os.path.dirname( os.path.abspath(__file__)) + os.path.sep + "fingerprints.txt"
-    if(os.path.exists(strFingerpath)):
-        print("[+] Reading fingerprints from ", strFingerpath)
-        match_file = open(strFingerpath, "r")
-        strMatchLines = match_file.readlines()
-
-        for strLine in strMatchLines:
-            strClean = strLine.strip()
-            strSplitted = strClean.split(',')
-            strKey = strSplitted[0].lower()
-
-            if(strKey in dctFingerprints):
-                dctFingerprints[strKey]["guess"] = dctFingerprints[strKey]["guess"] + "," + strSplitted[1]
+        file_ext = ".json"
+        
+    #File output option
+    if args.output:
+        if args.json:
+            if args.output[-5:] != file_ext:
+                output_file = args.output + file_ext
             else:
-                objVal = {"guess":strSplitted[1], "added":strSplitted[2]}
-                dctFingerprints[strKey] = objVal
-    else:
-        print("[-] Error: The fingerprint file requested does not exist (", strFingerpath, ")")
-
-if args.input:
-    input_file = open(args.input, "r")
-    entries = input_file.readlines()
-    for entry in entries:
-        port_check = entry.split(",")
-        if len(port_check) == 2:
-            destination_port = int(port_check[1][:-1])
-            destination_host = port_check[0]
+                output_file = args.output
         else:
-            destination_host = port_check[0].strip() # James - 2021-07-21 - Fixing this bug - previously: entry[:-1]
-        main(dctFingerprints)
-else:
-    main(dctFingerprints)
-#Close files
-if args.output:
-    file.close()
+            if args.output[-4:] != file_ext:
+                output_file = args.output + file_ext
+            else:
+                output_file = args.output
+        file = open(output_file, "a+")
+
+    # Fill the fingerprint dictionary    
+    if args.match:
+        strFingerpath = os.path.dirname( os.path.abspath(__file__)) + os.path.sep + "fingerprints.txt"
+        if(os.path.exists(strFingerpath)):
+            print("[+] Reading fingerprints from ", strFingerpath)
+            match_file = open(strFingerpath, "r")
+            strMatchLines = match_file.readlines()
+
+            for strLine in strMatchLines:
+                strClean = strLine.strip()
+                strSplitted = strClean.split(',')
+                strKey = strSplitted[0].lower()
+
+                if(strKey in dctFingerprints):
+                    dctFingerprints[strKey]["guess"] = dctFingerprints[strKey]["guess"] + "," + strSplitted[1]
+                else:
+                    objVal = {"guess":strSplitted[1], "added":strSplitted[2]}
+                    dctFingerprints[strKey] = objVal
+        else:
+            print("[-] Error: The fingerprint file requested does not exist (", strFingerpath, ")")
+
+    if args.input:
+        input_file = open(args.input, "r")
+        entries = input_file.readlines()
+        for entry in entries:
+            port_check = entry.split(",")
+            if len(port_check) == 2:
+                destination_port = int(port_check[1][:-1])
+                destination_host = port_check[0]
+            else:
+                destination_host = port_check[0].strip() # James - 2021-07-21 - Fixing this bug - previously: entry[:-1]
+            checkJarmForHost(dctFingerprints, args, destination_host, destination_port, file, proxyhost, proxyport)
+    else:
+        checkJarmForHost(dctFingerprints, args, destination_host, destination_port, file, proxyhost, proxyport)
+
+    #Close files
+    if args.output:
+        file.close()
+
+# Old fashioned python syntax
+if __name__ == "__main__":
+    main()

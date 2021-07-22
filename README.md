@@ -1,4 +1,4 @@
-# JARM  - Fork
+# JARMxy (a fork of jarm)
 
 James 2021-07-21 - Forked this project to fix a small but annoying bug... 
   
