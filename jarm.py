@@ -18,6 +18,7 @@
 # Forked by James Dickson, wallparse@gmail.com
 # - Fixed a minor bug and added matching function.
 # - Refactored to simplify new features, trying to keep as much of the original structure as possible.
+# - Added Elasticsearch output feature
 
 from __future__ import print_function
 
@@ -31,6 +32,50 @@ import argparse
 import hashlib
 import ipaddress
 import json # James added this to be able to use json objects instead of string concats.
+from datetime import datetime
+from elasticsearch import Elasticsearch
+from elasticsearch.connection import create_ssl_context
+import re
+
+def ingestElasticsearch(esConnection, esIndex, esDocument, strTimefield):
+    print("[+] shipping to elasticsearch index", esIndex)
+    dtNow = datetime.now()
+
+    # For simpler handling of elasticsearch indexes we enable index-names by date-time
+    strFinalIndex = esIndex.replace("#yyyy#", str(dtNow.year))
+    strFinalIndex = strFinalIndex.replace("#mm#", str(dtNow.month))
+    strFinalIndex = strFinalIndex.replace("#dd#", str(dtNow.day))
+
+    esDocument[strTimefield] = dtNow    # Set the timefield
+
+    # Adjust to be more compatible with ECS https://www.elastic.co/guide/en/ecs/current/ecs-destination.html
+    if "ip" in esDocument :        
+        strIP = esDocument["ip"]
+        del esDocument["ip"]
+        
+        # If host and ip has the same value we only store the ip.
+        if "host" in esDocument and esDocument["host"] != strIP:
+            strDomain = esDocument["host"]            
+
+            # To store the registered domain may be useful
+            if m:= re.search("([^.]{1,}[.]{1,}[^.]{1,})$", strDomain):
+                strRegDomain = m[1]          
+                        
+            esDocument["destination"] = { "ip":strIP, "domain":strDomain}
+
+            if(strRegDomain != None):
+                esDocument["destination"]["registered_domain"] = strRegDomain
+
+        else:
+            esDocument["destination"] = { "ip":strIP}
+
+        if "host" in esDocument:
+            del esDocument["host"]
+
+    esDocument["ecs"]  = {"version":"1.0.0"} # Mandatory for all ECS documents
+
+    # Ship the log to elasticsearch
+    res = esConnection.index(index=strFinalIndex, body=esDocument)
 
 
 #Randomly choose a grease value
@@ -456,7 +501,7 @@ def ParseNumber(number):
     else:
         return int(number)
 
-def checkJarmForHost(dctFingerprints, args, destination_host, destination_port, file, proxyhost, proxyport):
+def checkJarmForHost(dctFingerprints, args, destination_host, destination_port, file, proxyhost, proxyport, esConnection, strElasticTimestamp):
     #Select the packets and formats to send
     #Array format = [destination_host,destination_port,version,cipher_list,cipher_order,GREASE,RARE_APLN,1.3_SUPPORT,extension_orders]
     tls1_2_forward = [destination_host, destination_port, "TLS_1.2", "ALL", "FORWARD", "NO_GREASE", "APLN", "1.2_SUPPORT", "REVERSE"]
@@ -507,8 +552,12 @@ def checkJarmForHost(dctFingerprints, args, destination_host, destination_port, 
     # Replacing string concats
     jsonOutput = { "host":destination_host, "ip":ip, "result":result, "fuzzy":jarm, "guess":strBestGuess}
     strOutput = json.dumps(jsonOutput)
+    
+    # If requested, write to elasticsearch
+    if esConnection != None:
+        ingestElasticsearch(esConnection, args.elasticindex, jsonOutput, strElasticTimestamp)
 
-    #Write to file    
+    # Write to file    
     if args.output:
         if ip != None:
             if args.json:
@@ -522,8 +571,8 @@ def checkJarmForHost(dctFingerprints, args, destination_host, destination_port, 
         if args.verbose:
             if  args.json != True:
                 file.write("," + jarm)
-        file.write("\n")
-    #Print to STDOUT
+        file.write("\n")        
+    # Print to STDOUT
     else:
         if ip != None:
             if args.json:
@@ -565,6 +614,14 @@ def main():
     parser.add_argument("-j", "--json", help="Output ndjson (either to file or stdout; overrides --output defaults to CSV)", action="store_true")
     parser.add_argument("-P", "--proxy", help="To use a SOCKS5 proxy, provide address:port.", type=str)
     parser.add_argument("-m", "--match", help="Try to match the fingerprint signature in fingerprint.txt", action="store_true")
+    parser.add_argument("-e", "--elastichost", help="Use this elasticsearch host for output (default=127.0.0.1)", type=str)
+    parser.add_argument("--elasticindex", help="Use this elasticsearch index for output. Example: jarm-#yyyy#", type=str)
+    parser.add_argument("--elasticuser", help="Use this elasticsearch user (if required by the elastic server)", type=str)
+    parser.add_argument("--elasticpassword", help="Use this elasticsearch password (if required by the elastic server)", type=str)
+    parser.add_argument("--elastictls", help="Use if elasticsearch requires https (more common these days)", action="store_true")
+    parser.add_argument("--elasticskipcert", help="If specified no certificate validation occurs when connecting to elasticsearch", action="store_true")
+    parser.add_argument("--elasticport", help="If you have another port than 9200 for your elasticsearch then specify it here", type=int)
+    parser.add_argument("--elastictimefield", help="Set the timefield for elasticsearch (default=@timestamp)", type=str)
     args = parser.parse_args()
 
     if args.version:
@@ -581,17 +638,43 @@ def main():
     file_ext =          ".csv"
     dctFingerprints =   {}    
     proxyhost =         None
-    proxyport =         None    
+    proxyport =         None 
+    esConnection =      None
+    strElasticTimestamp = "@timestamp"
+
+    # Elasticsearch settings
+    if args.elastichost and args.elasticindex == None:
+        exit("[-] Error: If you want elasticsearch output you also needs to specify the index for output.")    
+
+    # If requested write to elasticsearch index
+    if args.elastichost != None :
+        if(args.elastictls):
+            #context = create_ssl_context()
+            #context.load_verify_locations(strCAFile)
+            #context.check_hostname = False
+            #context.verify_mode = ssl.CERT_NONE            
+            # verify_certs=False
+            bVerifyCerts = True
+            elasticport = 9200
+
+            if args.elastictimefield:
+                strElasticTimestamp = args.elastictimefield
+
+            if args.elasticport:
+                elasticport = ParseNumber(args.elasticport)
+
+            if args.elasticskipcert :
+                bVerifyCerts = False
+            
+
+            esConnection = Elasticsearch(args.elastichost, verify_certs=bVerifyCerts, http_auth=(args.elasticuser, args.elasticpassword), scheme="https",port=elasticport)
+        else:
+            esConnection = Elasticsearch(args.elastichost)            
 
     #set proxy
     if args.proxy:
         proxyhost, proxyport = args.proxy.split(':')
         proxyport = ParseNumber(proxyport)
-        try:
-            import socks
-        except ImportError:
-            print('Option proxy requires PySocks: pip install PySocks')
-            exit()
 
     if args.port:
         destination_port = int(args.port)
@@ -644,14 +727,14 @@ def main():
                 destination_host = port_check[0]
             else:
                 destination_host = port_check[0].strip() # James - 2021-07-21 - Fixing this bug - previously: entry[:-1]
-            checkJarmForHost(dctFingerprints, args, destination_host, destination_port, file, proxyhost, proxyport)
+            checkJarmForHost(dctFingerprints, args, destination_host, destination_port, file, proxyhost, proxyport, esConnection, strElasticTimestamp)
     else:
-        checkJarmForHost(dctFingerprints, args, destination_host, destination_port, file, proxyhost, proxyport)
+        checkJarmForHost(dctFingerprints, args, destination_host, destination_port, file, proxyhost, proxyport, esConnection, strElasticTimestamp)
 
     #Close files
     if args.output:
         file.close()
 
 # Old fashioned python syntax
-if __name__ == "__main__":
+if __name__ == "__main__":    
     main()
