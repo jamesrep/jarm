@@ -683,7 +683,7 @@ def writeHistory(historyFile, destination_host, dtNow):
             destination_host = destination_host.split(",")[0]
 
         strDateTime = dtNow.strftime("%Y-%m-%d %H:%M:%S") 
-        historyFile.write(destination_host + "," + strDateTime + "\n")
+        historyFile.write(destination_host.strip() + "," + strDateTime + "\n")
         historyFile.flush()            
    
 
