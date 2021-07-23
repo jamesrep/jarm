@@ -1,6 +1,7 @@
 # JARMxy (a fork of jarm)
 
-James 2021-07-21 - Forked this project to fix a small but annoying bug... 
+James 2021-07-21 - Forked this project to fix a small but annoying bug...
+James 2021-07-23 - Ok. changed it to multithreaded and added elasticsearch-connections 
   
 Please read the initial [JARM blog post](https://engineering.salesforce.com/easily-identify-malicious-servers-on-the-internet-with-jarm-e095edac525a) for more information.
   
@@ -99,3 +100,5 @@ With little to no overlap of the Alexa Top 1M Websites, it should be unlikely fo
 [Mike Brady](https://www.linkedin.com/in/mike-brady-b5293b21/) - Programing and testing  
   
 Rewritten in Python for operational use by [Caleb Yu](https://www.linkedin.com/in/caleb-yu/)
+
+Rewritten in this fork for allowing multithreading and elasticsearch-connectivity by [James D] (wallparse@gmail.com)
