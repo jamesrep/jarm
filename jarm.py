@@ -784,8 +784,8 @@ def checkWithThreads( lstAllDestinations,
                                     proxyhost, 
                                     proxyport, 
                                     strElasticTimestamp, 
-                                    dtNow,
-                                    lstHistory))
+                                    lstHistory,
+                                    lstAvoid))
 
         processes.append(pProc)        
 
