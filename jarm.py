@@ -743,6 +743,14 @@ def checkWithThreads( lstAllDestinations,
     remainders = int(len(lstAllDestinations) % threadCount)     # Yes, we'll potentially need one more thread for the remainders        
     processPos = 0
 
+    if(len(lstAllDestinations) < 1):
+        print("[-] Warning: the list is empty. No further tests")
+        return 
+
+    if(len(lstAllDestinations) < threadCount):
+        threadCount = len(lstAllDestinations)
+        print("[-] Warning: The number of items to test is less than the requested threads. Hence one item per thread will be executed")
+
     while processPos < threadCount:        
         endPos = ((processPos+1) * itemsPerThread)
         startPos = processPos*itemsPerThread
@@ -1033,7 +1041,7 @@ def main():
                     print("[+] Avoiding ", destination_host)
                 else:            
                     checkJarmForHost(  dctFingerprints, args, destination_host, destination_port, file, proxyhost, proxyport, esConnection, strElasticTimestamp)
-                    
+
         addToHistory(historyFile, lstElasticInput, dtNow,lstHistory)
         lstHistory = appendWithoutCR(lstHistory, lstElasticInput) # note that we have already added these.          
 
