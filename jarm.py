@@ -15,13 +15,13 @@
 # For full license text, see LICENSE.txt file in the repo root or https://opensource.org/licenses/BSD-3-Clause
 #
 
-# 2021-07-21 - Forked by James D, wallparse@gmail.com
+# 2021-07 - Forked by James D, wallparse@gmail.com
 # - Fixed a minor bug and added matching function.
 # - Refactored to simplify new features, trying to keep as much of the original structure as possible.
 # - Added Elasticsearch output feature
 # - Added Elasticsearch input feature
-#
-# This fork can fetch the hosts to test from one elasticsearch index and output to another elasticsearch index.
+# - Added multithreading
+# -> This fork can fetch the hosts to test from one elasticsearch index and output to another elasticsearch index.
 
 from __future__ import print_function
 import codecs
@@ -42,13 +42,22 @@ from multiprocessing import Process, Queue
 import threading
 
 # Returns the result from the elasticsearch-query
+# Note that the lstAvoidHosts and strInputField parameter is injected in es-query (thus validate this input field before this func)
 def fetchInputFromElastic(args, esInput, strInputField, strInputTime, maxSize, lstAvoidHosts):
     strFinishedQuery = args.elasticinputquery
+
+    if strFinishedQuery == None:
+        print("[-] Warning: no --elasticinputquery defined. Reverting to ", strInputField, ":*")
+        strFinishedQuery = strInputField + ":*"
 
     if len(lstAvoidHosts) > 0:
         for ahost in lstAvoidHosts:
             if(len(ahost) > 2):
-                strFinishedQuery += " AND NOT " + strInputField + ":\"" + ahost + "\""
+                if args.avoiddomaininquery:
+                    ahost = ahost.replace("-", "\\-")
+                    strFinishedQuery += " AND NOT " + strInputField + ":*" + ahost + ""
+                else:
+                    strFinishedQuery += " AND NOT " + strInputField + ":\"" + ahost + "\""
 
     # We return 1 result from the query just for debugging and the rest will be for the aggregation.
     esquery_agg =  {
@@ -71,7 +80,6 @@ def fetchInputFromElastic(args, esInput, strInputField, strInputTime, maxSize, l
         }
 
     result = esInput.search(index=args.elasticinputindex, body=esquery_agg)
-
     
     if result != None:
         thefields = result["aggregations"]["thefields"]["buckets"]
@@ -712,10 +720,17 @@ def checkForJarmInBulk(dctFingerprints,
         else:
             destination_host = port_check[0].strip() 
 
+        # Extract the registered domain part
+        strRegDomain = destination_host
+        if m:= re.search("([^.]{1,}[.]{1,}[^.]{1,})$", destination_host):
+            strRegDomain = m[1]
+
         if destination_host in lstAvoid :
             print("[+] Avoiding from list ", destination_host)
         elif destination_host in lstHistory:
             print("[+] Avoiding since already tested ", destination_host)
+        elif args.avoiddomain and strRegDomain != destination_host and strRegDomain in lstAvoid :
+            print("[+] Avoiding from list due to registered domain option", destination_host)           
         else:  
             checkJarmForHost(dctFingerprints, args, destination_host, destination_port, None, proxyhost, proxyport, esConnection2, strElasticTimestamp)
 
@@ -873,9 +888,11 @@ def main():
     parser.add_argument("--avoid", help="Use this file for avoiding specific domains/ips", type=str)
     parser.add_argument("--avoidinquery", help="Use this file for avoiding specific domains/ips directly in the elastic query", type=str)
     parser.add_argument("--history", help="Use this file for avoid checking each host more than once (if none, then no history)", type=str)
+    parser.add_argument("--avoiddomain", help="If set then the registered domain part of the fqdn is compared", action="store_true")
+    parser.add_argument("--avoiddomaininquery", help="If set then the registered domain part of the fqdn is compared direct in elastic query", action="store_true")
 
     # Multithreading added for ... speed
-    parser.add_argument("--threads", help="If set to a value > 0 this number of threads will be used for the JARM-tests", type=int)
+    parser.add_argument("--threads", help="If set to a value > 0 this number of threads will be used for the JARM-tests", type=int)    
     args = parser.parse_args()    
 
     # Init variables
