@@ -15,6 +15,10 @@
 # For full license text, see LICENSE.txt file in the repo root or https://opensource.org/licenses/BSD-3-Clause
 #
 
+# -----------------------------------------
+
+# Forked Version 2.0 (Juli 2021)
+#
 # 2021-07 - Forked by James D, wallparse@gmail.com
 # - Fixed a minor bug and added matching function.
 # - Refactored to simplify new features, trying to keep as much of the original structure as possible.
