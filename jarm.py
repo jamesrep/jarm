@@ -1017,8 +1017,6 @@ def main():
         else:
             print("[-] Error: The fingerprint file requested does not exist (", strFingerpath, ")")
 
-    bHistoryWritten = False
-
     # If we want file output option then the file is created here (threads cannot handle file output)
     if(args.threads != None and args.threads > 0):
         file = createOutputFileFromArgs(args)
