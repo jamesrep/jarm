@@ -44,6 +44,7 @@ from elasticsearch.connection import create_ssl_context
 import re
 from multiprocessing import Process, Queue
 import threading
+import socks
 
 # Returns the result from the elasticsearch-query
 # Note that the lstAvoidHosts and strInputField parameter is injected in es-query (thus validate this input field before this func)
@@ -369,7 +370,7 @@ def supported_versions(jarm_details, grease):
     return ext
 
 #Send the assembled client hello using a socket
-def send_packet(packet, destination_host, destination_port, proxyhost, proxyport):
+def send_packet(packet, destination_host, destination_port, proxyhost, proxyport, socktimeout):
     try:
         #Determine if the input is an IP or domain name
         try:
@@ -387,7 +388,7 @@ def send_packet(packet, destination_host, destination_port, proxyhost, proxyport
             else:
                 sock = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
             #Timeout of 20 seconds
-            sock.settimeout(20)
+            sock.settimeout(socktimeout)
             sock.connect((destination_host, destination_port, 0, 0))
         else:
             if proxyhost != None:
@@ -395,9 +396,11 @@ def send_packet(packet, destination_host, destination_port, proxyhost, proxyport
                 sock.set_proxy(socks.SOCKS5, proxyhost, proxyport)
             else:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            #Timeout of 20 seconds
-            sock.settimeout(20)
+
+            #Timeout of 10 seconds
+            sock.settimeout(socktimeout)
             sock.connect((destination_host, destination_port))
+
         #Resolve IP if given a domain name
         if raw_ip == False:
             ip = sock.getpeername()
@@ -585,11 +588,16 @@ def checkJarmForHost(dctFingerprints, args, destination_host, destination_port, 
     #Possible Extension order: FORWARD, REVERSE
     queue = [tls1_2_forward, tls1_2_reverse, tls1_2_top_half, tls1_2_bottom_half, tls1_2_middle_out, tls1_1_middle_out, tls1_3_forward, tls1_3_reverse, tls1_3_invalid, tls1_3_middle_out]
     jarm = ""
+
+    socktimeout = 10 # Default timeout for sockets
+    if(args.socktimeout):
+        socktimeout = args.socktimeout
+
     #Assemble, send, and decipher each packet
     iterate = 0
     while iterate < len(queue):
         payload = packet_building(queue[iterate])
-        server_hello, ip = send_packet(payload, destination_host, destination_port, proxyhost, proxyport)
+        server_hello, ip = send_packet(payload, destination_host, destination_port, proxyhost, proxyport, socktimeout)
         #Deal with timeout error
         if server_hello == "TIMEOUT":
             jarm = "|||,|||,|||,|||,|||,|||,|||,|||,|||,|||"
@@ -755,7 +763,7 @@ def checkWithThreads( lstAllDestinations,
                     lstHistory,
                     lstAvoid):
     # Init queue and process list
-    queue = Queue()
+    #queue = Queue()
     processes = []
 
     itemsPerThread = int(len(lstAllDestinations) / threadCount) # Number of items per thread
@@ -866,6 +874,7 @@ def main():
     parser.add_argument("-j", "--json", help="Output ndjson (either to file or stdout; overrides --output defaults to CSV)", action="store_true")
     parser.add_argument("-P", "--proxy", help="To use a SOCKS5 proxy, provide address:port.", type=str)
     parser.add_argument("-m", "--match", help="Try to match the fingerprint signature in fingerprint.txt", action="store_true")
+    parser.add_argument("--socktimeout", help="Timeout in seconds for socket connect attempts. (default=10)", type=int)
 
     # Elastic output
     parser.add_argument("-e", "--elastichost", help="Use this elasticsearch host for output (default=127.0.0.1)", type=str)
