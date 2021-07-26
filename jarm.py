@@ -51,6 +51,8 @@ import socks
 # Note that the lstAvoidHosts and strInputField parameter is injected in es-query (thus validate this input field before this func)
 def fetchInputFromElastic(args, esInput, strInputField, strInputTime, maxSize, lstAvoidHosts):
     strFinishedQuery = args.elasticinputquery
+    strMinutesBack = "now-" + str(args.fetchminutes) + "m"
+
 
     if strFinishedQuery == None:
         print("[-] Warning: no --elasticinputquery defined. Reverting to ", strInputField, ":*")
@@ -68,6 +70,7 @@ def fetchInputFromElastic(args, esInput, strInputField, strInputTime, maxSize, l
     # We return 1 result from the query just for debugging and the rest will be for the aggregation.
     esquery_agg =  {
         "size" : 1,
+        #"terminate_after":500,
         "aggs": {
             "thefields": {
                 "terms": { 
@@ -78,14 +81,28 @@ def fetchInputFromElastic(args, esInput, strInputField, strInputTime, maxSize, l
         },        
         "query": 
             {
-                "query_string": {
-                    "query": strFinishedQuery,                    
-                    "default_field": strInputField
+                "bool": {                
+                    "must": [
+                        {                
+                            "query_string": {
+                                "query": strFinishedQuery,                    
+                                "default_field": strInputField
+                            }                        
+                        },
+                        {
+                            "range": {
+                                args.elastictimefield: {
+                                    "format": "strict_date_optional_time",
+                                    "gte": strMinutesBack
+                                }
+                            }
+                        }                            
+                    ]
                 }
             }
         }
 
-    result = esInput.search(index=args.elasticinputindex, body=esquery_agg)
+    result = esInput.search(index=args.elasticinputindex, body=esquery_agg, request_timeout=args.elasticfindtimeout)
     
     if result != None:
         thefields = result["aggregations"]["thefields"]["buckets"]
@@ -683,6 +700,8 @@ def createElasticConnection(args):
             elasticport = 9200
             if args.elastictimefield:
                 strElasticTimestamp = args.elastictimefield
+            else:
+                args.elastictimefield="@timestamp"
 
             if args.elasticport:
                 elasticport = ParseNumber(args.elasticport)
@@ -918,6 +937,10 @@ def main():
     parser.add_argument("--avoiddomain", help="If set then the registered domain part of the fqdn is compared", action="store_true")
     parser.add_argument("--avoiddomaininquery", help="If set then the registered domain part of the fqdn is compared direct in elastic query", action="store_true")
 
+    # Filter by times
+    parser.add_argument("--elasticfindtimeout", help="Find timeout in seconds for elastic (default=40)", type=int)
+    parser.add_argument("--fetchminutes", help="Search this number of minutes back in time for elastic (default=10)", type=int)
+        
     # Multithreading added for ... speed
     parser.add_argument("--threads", help="If set to a value > 0 this number of threads will be used for the JARM-tests", type=int)    
     args = parser.parse_args()    
