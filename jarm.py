@@ -46,6 +46,7 @@ from multiprocessing import Process, Queue
 import threading
 import socks
 
+
 # Returns the result from the elasticsearch-query
 # Note that the lstAvoidHosts and strInputField parameter is injected in es-query (thus validate this input field before this func)
 def fetchInputFromElastic(args, esInput, strInputField, strInputTime, maxSize, lstAvoidHosts):
@@ -122,7 +123,8 @@ def ingestElasticsearch(esConnection, esIndex, esDocument, strTimefield):
             strDomain = esDocument["host"]            
 
             # To store the registered domain may be useful
-            if m:= re.search("([^.]{1,}[.]{1,}[^.]{1,})$", strDomain):
+            m = re.search("([^.]{1,}[.]{1,}[^.]{1,})$", strDomain)
+            if m != None:
                 strRegDomain = m[1]          
                         
             esDocument["destination"] = { "ip":strIP, "domain":strDomain}
@@ -734,7 +736,8 @@ def checkForJarmInBulk(dctFingerprints,
 
         # Extract the registered domain part
         strRegDomain = destination_host
-        if m:= re.search("([^.]{1,}[.]{1,}[^.]{1,})$", destination_host):
+        m = re.search("([^.]{1,}[.]{1,}[^.]{1,})$", destination_host)
+        if m != None:
             strRegDomain = m[1]
 
         if destination_host in lstAvoid :
@@ -861,6 +864,17 @@ def appendWithoutCR(lstAll, lstToAdd):
             lstResult.append(str.strip())        
     return lstResult
 
+def isWorldWritable(strFile):
+    stFileCheck = os.stat(strFile)
+    writeWorldWritable = (stFileCheck.st_mode & 0o2)
+    return (writeWorldWritable == 2)
+
+def assertDangerousInput(strFile):
+    if strFile and isWorldWritable(strFile):
+        print("[-] Error: it would be bad practice to use input from this file:", strFile, " since it is writable for all") 
+        exit(-1)
+                
+
 # Main function, gotta have one don't we
 def main():    
     parser = argparse.ArgumentParser(description="Enter an IP address and port to scan.")
@@ -930,6 +944,10 @@ def main():
         print("JARMxy - Yet another JARM Fork - 2021... started: ", str(dtNow))
         exit()
 
+    # Checking privileges since we are connecting to uncontrolled hosts
+    if os.name != 'nt' and os.getuid() == 0:
+        exit('[-] Error: This command shall not be run with sudo or as root user')           
+
     if args.output and args.threads:
         parser.error("[-] Error: Threads and Output-file combo is not yet supported")
 
@@ -953,6 +971,12 @@ def main():
 
         if args.elasticinputmax != None:
             elasticInputMax = args.elasticinputmax    
+
+        # For security, check the permissions of the files used for queries of elasticsearch 
+        # Windows, is ..hmm...  windows, nevermind.       
+        if os.name != 'nt': 
+            assertDangerousInput(args.avoiddomaininquery)
+            assertDangerousInput(args.avoidinquery)                   
 
         # Get the avoid-list for queries
         lstAvoidInQuery =   []
