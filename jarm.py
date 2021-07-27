@@ -918,6 +918,15 @@ def writeListToFile(elasticoutfile, lstElasticInput):
 
     return True
     
+# Ingests a text file with previously created json results into elasticsearch.
+def ingestFinishedResultInElastic(esConnection, dctFingerprints, args, destination_port,  proxyhost, proxyport,  strElasticTimestamp, dtNow, lstHistory, lstAvoid):
+    finput = open(args.jsoninput, "r")
+    strLines = finput.readlines()
+    finput.close()
+
+    for jsonOutput in strLines:
+        jObj = json.loads(jsonOutput.strip())
+        ingestElasticsearch(esConnection, args.elasticindex, jObj, strElasticTimestamp)
 
 # Main function, gotta have one don't we
 def main():    
@@ -933,6 +942,9 @@ def main():
     parser.add_argument("-P", "--proxy", help="To use a SOCKS5 proxy, provide address:port.", type=str)
     parser.add_argument("-m", "--match", help="Try to match the fingerprint signature in fingerprint.txt", action="store_true")
     parser.add_argument("--socktimeout", help="Timeout in seconds for socket connect attempts. (default=10)", type=int)
+
+    # Tests are already made, just reformat them and output to elastic
+    parser.add_argument("--jsoninput", help="Tests are already made, just read the json file line-by-line and output to elastic. Specify the filename to read from.", type=str)
 
     # Elastic output
     parser.add_argument("-e", "--elastichost", help="Use this elasticsearch host for output (default=127.0.0.1)", type=str)
@@ -951,7 +963,7 @@ def main():
     parser.add_argument("--elasticuser", help="Use this elasticsearch user (if required by the elastic server)", type=str)
     parser.add_argument("--elasticpassword", help="Use this elasticsearch password (if required by the elastic server)", type=str)
     parser.add_argument("--elastictls", help="Use if elasticsearch requires https (more common these days)", action="store_true")
-    parser.add_argument("--elasticskipcert", help="If specified no certificate validation occurs when connecting to elasticsearch", action="store_true")
+    parser.add_argument("--elasticskipcert", help="If specified no certificate validation occurs when connecting to elasticsearch (using this is NOT recommended of course)", action="store_true")
     parser.add_argument("--elasticport", help="If you have another port than 9200 for your elasticsearch then specify it here", type=int)
     parser.add_argument("--elastictimefield", help="Set the timefield for elasticsearch (default=@timestamp)", type=str)
     parser.add_argument("--elasticoutfile", help="If this is specified then the result from the elastic query will be written to this textfile.", type=str)
@@ -1063,9 +1075,6 @@ def main():
     if args.port:
         destination_port = int(args.port)
 
-    if args.json:
-        file_ext = ".json"        
-
     # Get the avoid-list
     if args.avoid != None and (os.path.exists(args.avoid)):
         avoidFile = open(args.avoid, "r")
@@ -1116,13 +1125,17 @@ def main():
     if(args.threads == None or args.threads < 1):
         file = createOutputFileFromArgs(args)
 
-    # Input from file if requested
+    if args.jsoninput != None:
+        print("[+] Reading input from ", args.jsoninput, " and sending to elastic:", args.elastichost)
+        ingestFinishedResultInElastic(esConnection,dctFingerprints, args, destination_port,  proxyhost, proxyport,  strElasticTimestamp, dtNow, lstHistory, lstAvoid)
+
+    # Input the hosts to test from file if requested
     if args.input:
         input_file = open(args.input, "r")
         entries = input_file.readlines()
 
         if(args.threads != None and args.threads > 0):
-            checkWithThreads(entries, args.threads, dctFingerprints, args, destination_port,  proxyhost, proxyport,  strElasticTimestamp, dtNow,lstHistory,lstAvoid)
+            checkWithThreads(entries, args.threads, dctFingerprints, args, destination_port,  proxyhost, proxyport,  strElasticTimestamp, dtNow, lstHistory, lstAvoid)
         else:        
             for entry in entries:
                 port_check = entry.split(",")
