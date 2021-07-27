@@ -696,15 +696,15 @@ def checkJarmForHost(dctFingerprints, args, destination_host, destination_port, 
         if args.json:
             sys.stdout.write("\n")
 
-def createElasticConnection(args):
+# Creates a connection object for es. TODO: Yes, bad cohesion
+def createElasticConnection(args, strElasticHost):
     # If requested write to elasticsearch index
-    if args.elastichost != None :
+    if strElasticHost != None :
         if(args.elastictls):
             bVerifyCerts = True
             elasticport = 9200
-            if args.elastictimefield:
-                strElasticTimestamp = args.elastictimefield
-            else:
+
+            if args.elastictimefield == None:
                 args.elastictimefield="@timestamp"
 
             if args.elasticport:
@@ -713,13 +713,14 @@ def createElasticConnection(args):
             if args.elasticskipcert :
                 bVerifyCerts = False
 
-            esConnection = Elasticsearch(args.elastichost, verify_certs=bVerifyCerts, http_auth=(args.elasticuser, args.elasticpassword), scheme="https",port=elasticport)
+            esConnection = Elasticsearch(strElasticHost, verify_certs=bVerifyCerts, http_auth=(args.elasticuser, args.elasticpassword), scheme="https",port=elasticport)
         else:
-            esConnection = Elasticsearch(args.elastichost)  
+            esConnection = Elasticsearch(strElasticHost)  
 
         return esConnection
 
-    return None    
+    return None   
+   
 
 # Thread safe if mtxHistoryFile contains lock, write-to-history file
 def writeHistory(historyFile, destination_host, dtNow):       
@@ -745,7 +746,7 @@ def checkForJarmInBulk(dctFingerprints,
                                 threadq):
 
     ipos = 0
-    esConnection2 = createElasticConnection(args)
+    esConnection2 = createElasticConnection(args, args.elastichost)
 
     while ipos < len(lstAllDestinations):            
         destination_host = lstAllDestinations[ipos]
@@ -1050,7 +1051,7 @@ def main():
                     lstAvoidInQuery.append(strHost.strip())            
                       
         print("[+] Fetching from elasticsearch...")
-        esInput = createElasticConnection(args)
+        esInput = createElasticConnection(args, args.elasticinputhost)
         lstElasticInput = fetchInputFromElastic(args, esInput, strElasticInputField, elasticInputMax, lstAvoidInQuery)
 
         if lstElasticInput != None:
@@ -1065,7 +1066,7 @@ def main():
             exit()
 
     # If requested write to elasticsearch index
-    esConnection = createElasticConnection(args)
+    esConnection = createElasticConnection(args, args.elastichost)
 
     #set proxy
     if args.proxy:
