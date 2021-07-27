@@ -49,7 +49,7 @@ import socks
 
 # Returns the result from the elasticsearch-query
 # Note that the lstAvoidHosts and strInputField parameter is injected in es-query (thus validate this input field before this func)
-def fetchInputFromElastic(args, esInput, strInputField, strInputTime, maxSize, lstAvoidHosts):
+def fetchInputFromElastic(args, esInput, strInputField,  maxSize, lstAvoidHosts):
     strFinishedQuery = args.elasticinputquery
     strMinutesBack = "now-" + str(args.fetchminutes) + "m"
 
@@ -586,7 +586,7 @@ def ParseNumber(number):
     else:
         return int(number)
 
-def checkJarmForHost(dctFingerprints, args, destination_host, destination_port, file, proxyhost, proxyport, esConnection, strElasticTimestamp):
+def checkJarmForHost(dctFingerprints, args, destination_host, destination_port, file, proxyhost, proxyport, esConnection, strElasticTimestamp, threadqueue):
     #Select the packets and formats to send
     #Array format = [destination_host,destination_port,version,cipher_list,cipher_order,GREASE,RARE_APLN,1.3_SUPPORT,extension_orders]
     tls1_2_forward = [destination_host, destination_port, "TLS_1.2", "ALL", "FORWARD", "NO_GREASE", "APLN", "1.2_SUPPORT", "REVERSE"]
@@ -647,8 +647,12 @@ def checkJarmForHost(dctFingerprints, args, destination_host, destination_port, 
     if esConnection != None:
         ingestElasticsearch(esConnection, args.elasticindex, jsonOutput, strElasticTimestamp)
 
+    # If requested write to thread queue
+    if threadqueue != None:
+        threadqueue.put(jsonOutput)
+
     # Write to file    
-    if args.output:
+    if args.output and file != None:
         if ip != None:
             if args.json:
                 file.write(strOutput)
@@ -737,7 +741,8 @@ def checkForJarmInBulk(dctFingerprints,
                                 proxyport,                                  
                                 strElasticTimestamp, 
                                 lstHistory,
-                                lstAvoid):
+                                lstAvoid,
+                                threadq):
 
     ipos = 0
     esConnection2 = createElasticConnection(args)
@@ -766,7 +771,7 @@ def checkForJarmInBulk(dctFingerprints,
         elif args.avoiddomain and strRegDomain != destination_host and strRegDomain in lstAvoid :
             print("[+] Avoiding from list due to registered domain option", destination_host)           
         else:  
-            checkJarmForHost(dctFingerprints, args, destination_host, destination_port, None, proxyhost, proxyport, esConnection2, strElasticTimestamp)
+            checkJarmForHost(dctFingerprints, args, destination_host, destination_port, None, proxyhost, proxyport, esConnection2, strElasticTimestamp, threadq)
 
         ipos+=1
 
@@ -796,6 +801,11 @@ def checkWithThreads( lstAllDestinations,
         print("[-] Warning: the list is empty. No further tests")
         return 
 
+    # If the user requests to write to an output file we create the queue here.
+    threadq = None    
+    if(args.output != None):
+        threadq = Queue()
+
     if(len(lstAllDestinations) < threadCount):
         threadCount = len(lstAllDestinations)
         print("[-] Warning: The number of items to test is less than the requested threads. Hence one item per thread will be executed")
@@ -817,7 +827,8 @@ def checkWithThreads( lstAllDestinations,
                                     proxyport,                                      
                                     strElasticTimestamp, 
                                     lstHistory,
-                                    lstAvoid))
+                                    lstAvoid,
+                                    threadq))
 
         processes.append(pProc)
         processPos += 1
@@ -834,7 +845,8 @@ def checkWithThreads( lstAllDestinations,
                                     proxyport, 
                                     strElasticTimestamp, 
                                     lstHistory,
-                                    lstAvoid))
+                                    lstAvoid,
+                                    threadq))
 
         processes.append(pProc)        
 
@@ -847,25 +859,24 @@ def checkWithThreads( lstAllDestinations,
 
     print("[+] Threads all collected")
 
-def createOutputFileFromArgs(args):
-    #File output option
-    if args.output:
-        file_ext =          ".csv"
+    if threadq != None:
+        outFile = createOutputFileFromArgs(args)
 
-        if args.json:
-            file_ext = ".json"        
-        if args.json:
-            if args.output[-5:] != file_ext:
-                output_file = args.output + file_ext
-            else:
-                output_file = args.output
-        else:
-            if args.output[-4:] != file_ext:
-                output_file = args.output + file_ext
-            else:
-                output_file = args.output
-        file = open(output_file, "a+")
+        if outFile != None:
+            while threadq.qsize():
+                objJson = threadq.get()
+                outFile.write(json.dumps(objJson, default=str) + "\n")
+                outFile.flush()
+            outFile.close()
+
+
+# Open a file handle (removed the extension creation code from original implementation)
+def createOutputFileFromArgs(args):
+    if args.output:
+        file = open(args.output, "a+")
         return file
+
+    return None
 
 # Add the items to the history file if they dont already exist.
 def addToHistory(historyFile, lstAllDestinations, dtNow, lstHistory):
@@ -893,6 +904,20 @@ def assertDangerousInput(strFile):
         print("[-] Error: it would be bad practice to use input from this file:", strFile, " since it is writable for all") 
         exit(-1)
                 
+def writeListToFile(elasticoutfile, lstElasticInput):
+    if os.path.exists(elasticoutfile):
+        print("[-] Error: the chosen output path exists: ", elasticoutfile)
+        return False
+    fout = open(elasticoutfile, "w")
+
+    for strLine in lstElasticInput:
+        fout.write(strLine + "\n")
+    
+    fout.flush()
+    fout.close()
+
+    return True
+    
 
 # Main function, gotta have one don't we
 def main():    
@@ -929,6 +954,7 @@ def main():
     parser.add_argument("--elasticskipcert", help="If specified no certificate validation occurs when connecting to elasticsearch", action="store_true")
     parser.add_argument("--elasticport", help="If you have another port than 9200 for your elasticsearch then specify it here", type=int)
     parser.add_argument("--elastictimefield", help="Set the timefield for elasticsearch (default=@timestamp)", type=str)
+    parser.add_argument("--elasticoutfile", help="If this is specified then the result from the elastic query will be written to this textfile.", type=str)
 
     # Avoid lists
     parser.add_argument("--avoid", help="Use this file for avoiding specific domains/ips", type=str)
@@ -971,8 +997,8 @@ def main():
     if os.name != 'nt' and os.getuid() == 0:
         exit('[-] Error: This command shall not be run with sudo or as root user')           
 
-    if args.output and args.threads:
-        parser.error("[-] Error: Threads and Output-file combo is not yet supported")
+    #if args.output and args.threads:
+    #    parser.error("[-] Error: Threads and Output-file combo is not yet supported")
 
     if not (args.scan or args.input or args.elasticinputhost):
         parser.error("[-] Error: A domain/IP to scan or an input file is required.")    
@@ -983,6 +1009,9 @@ def main():
     # Elasticsearch settings
     if args.elastichost and args.elasticindex == None:
         exit("[-] Error: If you want elasticsearch output you also needs to specify the index for output.")    
+
+    if args.elasticinputhost == None and args.elasticoutfile != None:
+        exit("[-] Error: If you want to store the elastic result into an output file then please specify the elastic input host (--elasticinputhost <hostname>)")
 
     # If we want to query an elasticsearch cluster for the hosts to do the Jarm-check on.
     if args.elasticinputhost and args.elasticinputindex != None:
@@ -1010,12 +1039,18 @@ def main():
                       
         print("[+] Fetching from elasticsearch...")
         esInput = createElasticConnection(args)
-        lstElasticInput = fetchInputFromElastic(args, esInput, strElasticInputField, strElasticInputTime, elasticInputMax, lstAvoidInQuery)
+        lstElasticInput = fetchInputFromElastic(args, esInput, strElasticInputField, elasticInputMax, lstAvoidInQuery)
 
         if lstElasticInput != None:
             print("[+] Retrieved ", str(len(lstElasticInput)), " entries from elasticsearch")
         else:
-            print("[-] Warning... the elasticsearch query did not result in any hits.")            
+            print("[-] Warning... the elasticsearch query did not result in any hits.") 
+
+        if args.elasticoutfile != None:
+            print("[+] Ok. You chose to just output to a text file. Hence we'll do that and exit")
+            writeListToFile(args.elasticoutfile, lstElasticInput)
+            print("[+] Done! since output to file", args.elasticoutfile)
+            exit()
 
     # If requested write to elasticsearch index
     esConnection = createElasticConnection(args)
@@ -1077,8 +1112,8 @@ def main():
         else:
             print("[-] Error: The fingerprint file requested does not exist (", strFingerpath, ")")
 
-    # If we want file output option then the file is created here (threads cannot handle file output)
-    if(args.threads != None and args.threads > 0):
+    # If we want file output option then the file is created here (threads handle file output differently)
+    if(args.threads == None or args.threads < 1):
         file = createOutputFileFromArgs(args)
 
     # Input from file if requested
@@ -1100,7 +1135,7 @@ def main():
                 if destination_host in lstAvoid or destination_host in lstHistory:
                     print("[+] Avoiding ", destination_host)
                 else:
-                    checkJarmForHost(  dctFingerprints, args, destination_host, destination_port, file, proxyhost, proxyport, esConnection, strElasticTimestamp)      
+                    checkJarmForHost(  dctFingerprints, args, destination_host, destination_port, file, proxyhost, proxyport, esConnection, strElasticTimestamp, None)      
 
         # Write to history
         addToHistory(historyFile, entries, dtNow, lstHistory)
@@ -1115,7 +1150,7 @@ def main():
                 if destination_host in lstAvoid or destination_host in lstHistory:
                     print("[+] Avoiding ", destination_host)
                 else:            
-                    checkJarmForHost(  dctFingerprints, args, destination_host, destination_port, file, proxyhost, proxyport, esConnection, strElasticTimestamp)
+                    checkJarmForHost(  dctFingerprints, args, destination_host, destination_port, file, proxyhost, proxyport, esConnection, strElasticTimestamp, None)
 
         addToHistory(historyFile, lstElasticInput, dtNow,lstHistory)
         lstHistory = appendWithoutCR(lstHistory, lstElasticInput) # note that we have already added these.          
@@ -1123,10 +1158,10 @@ def main():
 
     # The default, only one specific test (no avoid-lists here)
     if args.input == None and args.elasticinputhost == None:
-        checkJarmForHost(dctFingerprints, args, destination_host, destination_port, file, proxyhost, proxyport, esConnection, strElasticTimestamp)  
+        checkJarmForHost(dctFingerprints, args, destination_host, destination_port, file, proxyhost, proxyport, esConnection, strElasticTimestamp, None)  
 
     #Close files
-    if args.output:
+    if file != None:
         file.close()
     
     if historyFile != None:
