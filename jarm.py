@@ -178,9 +178,8 @@ def ingestElasticsearch(esConnection, esIndex, esDocument, strTimefield):
     try:
         res = esConnection.index(index=strFinalIndex, body=esDocument)
     except:
-        print("[-] Error on ingest of ", json.dumps(esDocument, default=str))
-        exit(-1)
-
+        print("[-] Error on ingest of ", json.dumps(esDocument, default=str), " this may happen when ip is redirected to domain when resolving. Skipping this")      
+        
 
 #Randomly choose a grease value
 def choose_grease():
@@ -411,7 +410,9 @@ def supported_versions(jarm_details, grease):
 
 #Send the assembled client hello using a socket
 def send_packet(packet, destination_host, destination_port, proxyhost, proxyport, socktimeout):
- 
+    ip = None
+    ipAddr = None
+
     try:
         #Connect the socket
         if ":" in destination_host:
@@ -446,10 +447,11 @@ def send_packet(packet, destination_host, destination_port, proxyhost, proxyport
         if ip == None:
             ip = sock.getpeername()
 
-        try:
-            ipAddr = socket.gethostbyname(destination_host)                                       
-        except:
-            ipAddr = None
+        if ipAddr == None:
+            try:
+                ipAddr = socket.gethostbyname(destination_host)                                       
+            except:
+                ipAddr = None
                          
         sock.sendall(packet)       
         data = sock.recv(1484)  #Receive server hello
@@ -616,6 +618,8 @@ def ParseNumber(number):
         return int(number)
 
 def checkJarmForHost(dctFingerprints, args, destination_host, destination_port, file, proxyhost, proxyport, esConnection, strElasticTimestamp, threadqueue):
+    ipaddr2 = None
+    
     #Select the packets and formats to send
     #Array format = [destination_host,destination_port,version,cipher_list,cipher_order,GREASE,RARE_APLN,1.3_SUPPORT,extension_orders]
     tls1_2_forward = [destination_host, destination_port, "TLS_1.2", "ALL", "FORWARD", "NO_GREASE", "APLN", "1.2_SUPPORT", "REVERSE"]
@@ -645,7 +649,12 @@ def checkJarmForHost(dctFingerprints, args, destination_host, destination_port, 
     iterate = 0
     while iterate < len(queue):
         payload = packet_building(queue[iterate])
-        server_hello, ip, ipaddr2 = send_packet(payload, destination_host, destination_port, proxyhost, proxyport, socktimeout)
+        try:
+            server_hello, ip, ipaddr2 = send_packet(payload, destination_host, destination_port, proxyhost, proxyport, socktimeout)
+        except:
+            print("[-] Error on connect to ", destination_host, " interrupting tests")
+            jarm = "|||,|||,|||,|||,|||,|||,|||,|||,|||,|||"
+            break
         #Deal with timeout error
         if server_hello == "TIMEOUT":
             jarm = "|||,|||,|||,|||,|||,|||,|||,|||,|||,|||"
