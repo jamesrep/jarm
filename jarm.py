@@ -411,18 +411,8 @@ def supported_versions(jarm_details, grease):
 
 #Send the assembled client hello using a socket
 def send_packet(packet, destination_host, destination_port, proxyhost, proxyport, socktimeout):
-    ipAddr = None       # I'm old, I like declaring variables. This variable contains null or the valid ip.
-    raw_ip = False
-
+ 
     try:
-        #Determine if the input is an IP or domain name
-        try:
-            if (type(ipaddress.ip_address(destination_host)) == ipaddress.IPv4Address) or (type(ipaddress.ip_address(destination_host)) == ipaddress.IPv6Address):
-                raw_ip = True
-                ip = (destination_host, destination_port)
-        except ValueError as e:
-                ip = (None, None)
-                raw_ip = False
         #Connect the socket
         if ":" in destination_host:
             if proxyhost != None:
@@ -444,13 +434,23 @@ def send_packet(packet, destination_host, destination_port, proxyhost, proxyport
             sock.settimeout(socktimeout)
             sock.connect((destination_host, destination_port))
 
-        ipAddr = destination_host
+        # Determine if the input is an IP or domain name
+        ip = None
+        try:
+            if (type(ipaddress.ip_address(destination_host)) == ipaddress.IPv4Address) or (type(ipaddress.ip_address(destination_host)) == ipaddress.IPv6Address):
+                ip = (destination_host, destination_port)
+                ipAddr = destination_host
+        except ValueError as e:
+            ip = None
 
-        #Resolve IP if given a domain name
-        if raw_ip == False:
+        if ip == None:
             ip = sock.getpeername()
-            ipAddr = socket.gethostbyname(destination_host)
 
+        try:
+            ipAddr = socket.gethostbyname(destination_host)                                       
+        except:
+            ipAddr = None
+                         
         sock.sendall(packet)       
         data = sock.recv(1484)  #Receive server hello
         
@@ -686,7 +686,7 @@ def checkJarmForHost(dctFingerprints, args, destination_host, destination_port, 
             if args.json:
                 file.write(strOutput)
             else:
-                file.write(destination_host + "," + ip + "," + result)
+                file.write(destination_host + "," + ipaddr2 + "," + result)
         else:
             file.write(destination_host + ",Failed to resolve IP," + result)
             
