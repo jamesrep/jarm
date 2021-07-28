@@ -45,6 +45,7 @@ import re
 from multiprocessing import Process, Queue
 import threading
 import socks
+import time
 
 
 # Returns the result from the elasticsearch-query
@@ -455,7 +456,7 @@ def send_packet(packet, destination_host, destination_port, proxyhost, proxyport
         return None, ip[0]
 
 #If a packet is received, decipher the details
-def read_packet(data, jarm_details):
+def read_packet(data):
     try:
         if data == None:
             return "|||"
@@ -637,7 +638,7 @@ def checkJarmForHost(dctFingerprints, args, destination_host, destination_port, 
         if server_hello == "TIMEOUT":
             jarm = "|||,|||,|||,|||,|||,|||,|||,|||,|||,|||"
             break
-        ans = read_packet(server_hello, queue[iterate])
+        ans = read_packet(server_hello)
         jarm += ans
         iterate += 1
         if iterate == len(queue):
@@ -788,11 +789,32 @@ def checkForJarmInBulk(dctFingerprints,
         elif args.avoiddomain and strRegDomain != destination_host and strRegDomain in lstAvoid :
             print("[+] Avoiding from list due to registered domain option", destination_host)           
         else:  
+            print("[+] Testing: ", destination_host)
             checkJarmForHost(dctFingerprints, args, destination_host, destination_port, None, proxyhost, proxyport, esConnection2, strElasticTimestamp, threadq)
+            print("[+] Finished tests of: ", destination_host)
 
         ipos+=1
 
+    print("[+] Bulk complete")
+
     return True    
+
+# Consumer thread for the output file queues
+def queueConsumer(args, threadq, commandqueue):
+    outFile = createOutputFileFromArgs(args) 
+
+    if threadq != None :
+        while commandqueue.qsize() < 1:
+            while threadq.qsize():
+                objJson = threadq.get()
+                outFile.write(json.dumps(objJson, default=str) + "\n")
+                outFile.flush()
+            time.sleep(1.0)
+        
+    if outFile != None:
+        outFile.close()
+
+    
 
 # The slowness of https, python, networks and whatnot made me do this....
 def checkWithThreads( lstAllDestinations, 
@@ -848,6 +870,7 @@ def checkWithThreads( lstAllDestinations,
                                     threadq))
 
         processes.append(pProc)
+        pProc.start()
         processPos += 1
 
     # Add the remainders if any to a single process
@@ -864,27 +887,47 @@ def checkWithThreads( lstAllDestinations,
                                     lstHistory,
                                     lstAvoid,
                                     threadq))
-
+        pProc.start()
         processes.append(pProc)        
 
-    print("[+] Starting threads...")
-    for p in processes: # First we start all processes
-        p.start()
+    print("[+] Joining ", str(len(processes)), " threads...")
     
-    for p in processes: # Now we join them
-        p.join()
+    pcounter=0
+    consumerProc = None
+    consumerQueue = Queue()
+    if threadq != None:           
+        consumerProc = Process(target=queueConsumer, args=(args, threadq, consumerQueue))
+        consumerProc.start()
 
+
+    for p in processes: # Now we join the threads
+        if threadq != None:
+            print("[+] Queue length ", str(threadq.qsize()))
+
+        pcounter +=1
+        print("[+] Joining thread ", pcounter)
+
+        p.join()                
+        print("[+] Thread ", pcounter, " joined.")
+                   
+
+    #if outFile != None:
+    #    outFile.close()         
     print("[+] Threads all collected")
 
-    if threadq != None:
-        outFile = createOutputFileFromArgs(args)
+    # Terminate the consumer queue
+    if consumerProc != None:
+        consumerQueue.put("terminate")
+        consumerProc.join()
 
-        if outFile != None:
-            while threadq.qsize():
-                objJson = threadq.get()
-                outFile.write(json.dumps(objJson, default=str) + "\n")
-                outFile.flush()
-            outFile.close()
+#    if threadq != None:
+#        outFile = createOutputFileFromArgs(args)
+#       if outFile != None:
+#            while threadq.qsize():
+#                objJson = threadq.get()
+#                outFile.write(json.dumps(objJson, default=str) + "\n")
+#                outFile.flush()
+#            outFile.close()
 
 
 # Open a file handle (removed the extension creation code from original implementation)
@@ -1007,7 +1050,6 @@ def main():
     file =              None
     destination_host =  args.scan
     destination_port =  443
-    file_ext =          ".csv"
     dctFingerprints =   {}    
     proxyhost =         None
     proxyport =         None 
@@ -1015,7 +1057,6 @@ def main():
     strElasticTimestamp = "@timestamp"
     lstElasticInput =   None
     strElasticInputField = "destination.domain.keyword"
-    strElasticInputTime = "1h"
     elasticInputMax =   1000                        # The maximum number of hosts to fetch from elasticsearch
     lstAvoid =          []                          # Will receive the static avoid list    
     lstHistory =        []                          # Will receive the history list
@@ -1050,9 +1091,6 @@ def main():
     if args.elasticinputhost and args.elasticinputindex != None:
         if args.elasticinputfield != None:
             strElasticInputField = args.elasticinputfield
-
-        if args.elasticinputtimespan != None:
-            strElasticInputTime = args.elasticinputtimespan    
 
         if args.elasticinputmax != None:
             elasticInputMax = args.elasticinputmax    
@@ -1148,7 +1186,10 @@ def main():
 
     if args.jsoninput != None:
         print("[+] Reading input from ", args.jsoninput, " and sending to elastic:", args.elastichost)
-        ingestFinishedResultInElastic(esConnection,dctFingerprints, args, destination_port,  proxyhost, proxyport,  strElasticTimestamp, dtNow, lstHistory, lstAvoid)
+        if esConnection == None:
+            print("[-] Error: no elastic connection for ingest")
+        else:
+            ingestFinishedResultInElastic(esConnection,dctFingerprints, args, destination_port,  proxyhost, proxyport,  strElasticTimestamp, dtNow, lstHistory, lstAvoid)
 
     # Input the hosts to test from file if requested
     if args.input:
