@@ -112,9 +112,18 @@ def fetchInputFromElastic(args, esInput, strInputField,  maxSize, lstAvoidHosts)
         flen = len(thefields)
 
         while beginBucket < flen:
-            lstToReturn.append(thefields[beginBucket]["key"]) 
-            beginBucket = beginBucket +1
-        
+            strJarmCandidate = thefields[beginBucket]["key"]
+
+            # We really only want valid domains like... ^([A-z0-9\-.]{2,})$
+            mValidDomain = re.search(args.validdomains, strJarmCandidate)
+
+            if mValidDomain != None:
+                strJarmCandidate = mValidDomain[1]    
+                lstToReturn.append(strJarmCandidate) 
+            else:
+                print("[-] Avoiding domain since not matching pattern ", strJarmCandidate)
+
+            beginBucket = beginBucket +1        
         return lstToReturn
 
     return None
@@ -979,6 +988,9 @@ def main():
     # Filter by times
     parser.add_argument("--elasticfindtimeout", help="Find timeout in seconds for elastic (default=40)", type=int)
     parser.add_argument("--fetchminutes", help="Search this number of minutes back in time for elastic (default=10)", type=int)
+
+    # Misc
+    parser.add_argument("--validdomains", help="Regular expression to determine valid domains to test for jarm. Default=^([A-z0-9\\-.])$", type=str)
         
     # Multithreading added for ... speed
     parser.add_argument("--threads", help="If set to a value > 0 this number of threads will be used for the JARM-tests", type=int)    
@@ -1010,8 +1022,9 @@ def main():
     if os.name != 'nt' and os.getuid() == 0:
         exit('[-] Error: This command shall not be run with sudo or as root user')           
 
-    #if args.output and args.threads:
-    #    parser.error("[-] Error: Threads and Output-file combo is not yet supported")
+    # Set the valid domains regexp
+    if args.validdomains == None:
+        args.validdomains = "^([A-z0-9\-.]{2,})$"
 
     if not (args.scan or args.input or args.elasticinputhost):
         parser.error("[-] Error: A domain/IP to scan or an input file is required.")    
