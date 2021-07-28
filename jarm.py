@@ -175,7 +175,11 @@ def ingestElasticsearch(esConnection, esIndex, esDocument, strTimefield):
     esDocument["ecs"]  = {"version":"1.0.0"} # Mandatory for all ECS documents
 
     # Ship the log to elasticsearch
-    res = esConnection.index(index=strFinalIndex, body=esDocument)
+    try:
+        res = esConnection.index(index=strFinalIndex, body=esDocument)
+    except:
+        print("[-] Error on ingest of ", json.dumps(esDocument, default=str))
+        exit(-1)
 
 
 #Randomly choose a grease value
@@ -407,6 +411,9 @@ def supported_versions(jarm_details, grease):
 
 #Send the assembled client hello using a socket
 def send_packet(packet, destination_host, destination_port, proxyhost, proxyport, socktimeout):
+    ipAddr = None       # I'm old, I like declaring variables. This variable contains null or the valid ip.
+    raw_ip = False
+
     try:
         #Determine if the input is an IP or domain name
         try:
@@ -437,23 +444,28 @@ def send_packet(packet, destination_host, destination_port, proxyhost, proxyport
             sock.settimeout(socktimeout)
             sock.connect((destination_host, destination_port))
 
+        ipAddr = destination_host
+
         #Resolve IP if given a domain name
         if raw_ip == False:
             ip = sock.getpeername()
-        sock.sendall(packet)
-        #Receive server hello
-        data = sock.recv(1484)
-        #Close socket
-        sock.shutdown(socket.SHUT_RDWR)
+            ipAddr = socket.gethostbyname(destination_host)
+
+        sock.sendall(packet)       
+        data = sock.recv(1484)  #Receive server hello
+        
+        sock.shutdown(socket.SHUT_RDWR) #Close socket
         sock.close()
-        return bytearray(data), ip[0]
+
+        return bytearray(data), ip[0], ipAddr
+
     #Timeout errors result in an empty hash
     except socket.timeout as e:
         sock.close()
-        return "TIMEOUT", ip[0]
+        return "TIMEOUT", ip[0], ipAddr
     except Exception as e:
         sock.close()
-        return None, ip[0]
+        return None, ip[0], ipAddr
 
 #If a packet is received, decipher the details
 def read_packet(data):
@@ -633,7 +645,7 @@ def checkJarmForHost(dctFingerprints, args, destination_host, destination_port, 
     iterate = 0
     while iterate < len(queue):
         payload = packet_building(queue[iterate])
-        server_hello, ip = send_packet(payload, destination_host, destination_port, proxyhost, proxyport, socktimeout)
+        server_hello, ip, ipaddr2 = send_packet(payload, destination_host, destination_port, proxyhost, proxyport, socktimeout)
         #Deal with timeout error
         if server_hello == "TIMEOUT":
             jarm = "|||,|||,|||,|||,|||,|||,|||,|||,|||,|||"
@@ -657,7 +669,7 @@ def checkJarmForHost(dctFingerprints, args, destination_host, destination_port, 
             strBestGuess = objMatch["guess"]
 
     # Replacing string concats
-    jsonOutput = { "host":destination_host, "ip":ip, "result":result, "fuzzy":jarm, "guess":strBestGuess}
+    jsonOutput = { "host":destination_host, "ip":ipaddr2, "result":result, "fuzzy":jarm, "guess":strBestGuess}
     strOutput = json.dumps(jsonOutput)
     
     # If requested, write to elasticsearch
@@ -760,7 +772,8 @@ def checkForJarmInBulk(dctFingerprints,
                                 strElasticTimestamp, 
                                 lstHistory,
                                 lstAvoid,
-                                threadq):
+                                threadq,
+                                threadname):
 
     ipos = 0
     esConnection2 = createElasticConnection(args, args.elastichost)
@@ -795,7 +808,7 @@ def checkForJarmInBulk(dctFingerprints,
 
         ipos+=1
 
-    print("[+] Bulk complete")
+    print("[+] Bulk complete thread ", str(threadname))
 
     return True    
 
@@ -867,7 +880,8 @@ def checkWithThreads( lstAllDestinations,
                                     strElasticTimestamp, 
                                     lstHistory,
                                     lstAvoid,
-                                    threadq))
+                                    threadq,
+                                    processPos))
 
         processes.append(pProc)
         pProc.start()
@@ -886,7 +900,8 @@ def checkWithThreads( lstAllDestinations,
                                     strElasticTimestamp, 
                                     lstHistory,
                                     lstAvoid,
-                                    threadq))
+                                    threadq,
+                                    "remainders"))
         pProc.start()
         processes.append(pProc)        
 
@@ -919,15 +934,6 @@ def checkWithThreads( lstAllDestinations,
     if consumerProc != None:
         consumerQueue.put("terminate")
         consumerProc.join()
-
-#    if threadq != None:
-#        outFile = createOutputFileFromArgs(args)
-#       if outFile != None:
-#            while threadq.qsize():
-#                objJson = threadq.get()
-#                outFile.write(json.dumps(objJson, default=str) + "\n")
-#                outFile.flush()
-#            outFile.close()
 
 
 # Open a file handle (removed the extension creation code from original implementation)
@@ -1074,7 +1080,7 @@ def main():
     if args.validdomains == None:
         args.validdomains = "^([A-z0-9\-.]{2,})$"
 
-    if not (args.scan or args.input or args.elasticinputhost):
+    if not (args.scan or args.input or args.elasticinputhost or args.jsoninput):
         parser.error("[-] Error: A domain/IP to scan or an input file is required.")    
 
     if args.elasticinputhost and args.elasticinputindex == None:
@@ -1232,7 +1238,7 @@ def main():
 
 
     # The default, only one specific test (no avoid-lists here)
-    if args.input == None and args.elasticinputhost == None:
+    if args.jsoninput == None and args.input == None and args.elasticinputhost == None:
         checkJarmForHost(dctFingerprints, args, destination_host, destination_port, file, proxyhost, proxyport, esConnection, strElasticTimestamp, None)  
 
     #Close files
