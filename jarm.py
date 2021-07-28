@@ -105,11 +105,16 @@ def fetchInputFromElastic(args, esInput, strInputField,  maxSize, lstAvoidHosts)
     result = esInput.search(index=args.elasticinputindex, body=esquery_agg, request_timeout=args.elasticfindtimeout)
     
     if result != None:
+        print("[+] Got result back from elasticsearch")
+
         thefields = result["aggregations"]["thefields"]["buckets"]
         
         lstToReturn = []
         beginBucket = 0
         flen = len(thefields)
+
+        if(flen < 1):
+            print("[-] Warning: got no results from elastic. The result is ", json.dumps(result))
 
         while beginBucket < flen:
             strJarmCandidate = thefields[beginBucket]["key"]
@@ -125,6 +130,8 @@ def fetchInputFromElastic(args, esInput, strInputField,  maxSize, lstAvoidHosts)
 
             beginBucket = beginBucket +1        
         return lstToReturn
+    else:
+        print("[-] Warning: The elastic query returned no result.")
 
     return None
 
