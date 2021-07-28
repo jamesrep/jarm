@@ -1154,7 +1154,7 @@ def main():
 
         # Read line by line and remove the timestamp
         for line in lstTemp:
-            lstHistory.append(line.split(",")[0])
+            lstHistory.append(line.split(",")[0].strip())
 
         historyFile.close()
         historyFile = None
