@@ -124,8 +124,20 @@ def fetchInputFromElastic(args, esInput, strInputField,  maxSize, lstAvoidHosts)
             mValidDomain = re.search(args.validdomains, strJarmCandidate)
 
             if mValidDomain != None:
-                strJarmCandidate = mValidDomain[1]    
-                lstToReturn.append(strJarmCandidate) 
+                strJarmCandidate = mValidDomain[1] 
+
+                if args.fixarpa: # If we want to fix the arpa-addr..
+                    mArpa = re.search("^([0-9]{1,3}).([0-9]{1,3}).([0-9]{1,3}).([0-9]{1,3}).in\\-addr.arpa$", strJarmCandidate)    
+
+                    if mArpa != None:            
+                        strJarmCandidate = mArpa[4] + "." + mArpa[3] + "." + mArpa[2] + "." + mArpa[1] # Reverse the address
+                    else:
+                        mArpa = re.search("^.+.([0-9]{1,3}).in\\-addr.arpa$", strJarmCandidate) # we do not want to handle these types of addresses in this mode.
+                        if mArpa != None:
+                            strJarmCandidate = None
+
+                if strJarmCandidate != None:
+                    lstToReturn.append(strJarmCandidate) 
             else:
                 print("[-] Avoiding domain since not matching pattern ", strJarmCandidate)
 
@@ -1046,7 +1058,7 @@ def main():
     parser.add_argument("--elasticport", help="If you have another port than 9200 for your elasticsearch then specify it here", type=int)
     parser.add_argument("--elastictimefield", help="Set the timefield for elasticsearch (default=@timestamp)", type=str)
     parser.add_argument("--elasticoutfile", help="If this is specified then the result from the elastic query will be written to this textfile.", type=str)
-
+    
     # Avoid lists
     parser.add_argument("--avoid", help="Use this file for avoiding specific domains/ips", type=str)
     parser.add_argument("--avoidinquery", help="Use this file for avoiding specific domains/ips directly in the elastic query", type=str)
@@ -1060,7 +1072,8 @@ def main():
 
     # Misc
     parser.add_argument("--validdomains", help="Regular expression to determine valid domains to test for jarm. Default=^([A-z0-9\\-.])$", type=str)
-        
+    parser.add_argument("--fixarpa", help="If we get a domain that is the arpa-address (like 1.2.3.4.in-addr.arpa)", action="store_true")
+
     # Multithreading added for ... speed
     parser.add_argument("--threads", help="If set to a value > 0 this number of threads will be used for the JARM-tests", type=int)    
     args = parser.parse_args()    
