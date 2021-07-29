@@ -769,7 +769,10 @@ def writeHistory(historyFile, destination_host, dtNow):
 
         strDateTime = dtNow.strftime("%Y-%m-%d %H:%M:%S") 
         historyFile.write(destination_host.strip() + "," + strDateTime + "\n")
-        historyFile.flush()            
+        historyFile.flush() 
+    else:
+        print("[-] Error: history file is None")
+        exit(-1)           
    
 
 
@@ -957,7 +960,7 @@ def createOutputFileFromArgs(args):
 # Add the items to the history file if they dont already exist.
 def addToHistory(historyFile, lstAllDestinations, dtNow, lstHistory):
     for lst in lstAllDestinations:
-        if not lst in lstHistory:
+        if not lst.strip() in lstHistory:
             writeHistory(historyFile, lst, dtNow)
 
 def appendWithoutCR(lstAll, lstToAdd):
@@ -1211,7 +1214,6 @@ def main():
     if args.input:
         input_file = open(args.input, "r")
         entries = input_file.readlines()
-        lstToAddForHistory = []
 
         if(args.threads != None and args.threads > 0):
             checkWithThreads(entries, args.threads, dctFingerprints, args, destination_port,  proxyhost, proxyport,  strElasticTimestamp, dtNow, lstHistory, lstAvoid)
@@ -1228,15 +1230,13 @@ def main():
                     print("[+] Avoiding ", destination_host)
                 else:
                     checkJarmForHost(  dctFingerprints, args, destination_host, destination_port, file, proxyhost, proxyport, esConnection, strElasticTimestamp, None)   
-                    lstToAddForHistory.append(destination_host)   
 
         # Write to history
-        addToHistory(historyFile, lstToAddForHistory, dtNow, lstHistory)
-        lstHistory = appendWithoutCR(lstHistory, lstToAddForHistory) # note that we have already added these.        
+        addToHistory(historyFile, entries, dtNow, lstHistory)
+        lstHistory = appendWithoutCR(lstHistory, entries) # note that we have already added these.        
 
     # The Elasticsearch input
     if args.elasticinputhost:
-        lstToAddForHistory = []
         if(args.threads != None and args.threads > 0):
             checkWithThreads(lstElasticInput, args.threads, dctFingerprints, args, destination_port,  proxyhost, proxyport,  strElasticTimestamp, dtNow,lstHistory,lstAvoid)
         else:          
@@ -1245,10 +1245,9 @@ def main():
                     print("[+] Avoiding ", destination_host)
                 else:            
                     checkJarmForHost(  dctFingerprints, args, destination_host, destination_port, file, proxyhost, proxyport, esConnection, strElasticTimestamp, None)
-                    lstToAddForHistory.append(destination_host)  
 
-        addToHistory(historyFile, lstToAddForHistory, dtNow,lstHistory)
-        lstHistory = appendWithoutCR(lstHistory, lstToAddForHistory) # note that we have already added these.          
+        addToHistory(historyFile, entries, dtNow,lstHistory)
+        lstHistory = appendWithoutCR(lstHistory, entries) # note that we have already added these.          
 
 
     # The default, only one specific test (no avoid-lists here)
