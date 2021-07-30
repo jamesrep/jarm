@@ -1,3 +1,4 @@
+# James Dickson, 2021, Just a small script to purge old entries from the history file.
 import os
 import argparse
 import datetime
