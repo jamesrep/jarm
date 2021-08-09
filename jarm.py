@@ -838,19 +838,18 @@ def checkForJarmInBulk(dctFingerprints,
     return True    
 
 # Consumer thread for the output file queues
-def queueConsumer(args, threadq, commandqueue):
-    outFile = createOutputFileFromArgs(args) 
-
+def queueConsumer(args, threadq, commandqueue):     
     if threadq != None :
-        while commandqueue.qsize() < 1:
-            while threadq.qsize():
-                objJson = threadq.get()
-                outFile.write(json.dumps(objJson, default=str) + "\n")
-                outFile.flush()
+        outFile = createOutputFileFromArgs(args)
+
+        while commandqueue.qsize() < 1 or threadq.qsize():
+            objJson = threadq.get()
+            outFile.write(json.dumps(objJson, default=str) + "\n")
+            outFile.flush()
             time.sleep(1.0)
         
-    if outFile != None:
-        outFile.close()
+        if outFile != None:
+            outFile.close()
 
     
 
