@@ -10,6 +10,7 @@ def main():
     parser = argparse.ArgumentParser(description="Enter the history file to purge")   
     parser.add_argument("--file", help="History file", type=str)
     parser.add_argument("--days", help="Days to keep", type=int)
+    parser.add_argument("--verbose", help="For debugging messages", action="store_true")
 
     args = parser.parse_args()    
 
@@ -38,9 +39,11 @@ def main():
                     dtStartDate = dtObj + datetime.timedelta(days=daysToKeep)         
 
                     if(dtStartDate < dtNow):
-                        print("[+] This line is too old ", line)
+                        if (args.verbose):
+                            print("[+] This line is too old ", line)
                     else:
-                        print("[+] Adding ", line) 
+                        if (args.verbose):
+                            print("[+] Adding ", line) 
                         tmpFile.write(line)
     historyFile.close()
     os.remove(args.file)
