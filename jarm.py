@@ -843,10 +843,12 @@ def queueConsumer(args, threadq, commandqueue):
         outFile = createOutputFileFromArgs(args)
 
         while commandqueue.qsize() < 1 or threadq.qsize():
-            objJson = threadq.get()
-            outFile.write(json.dumps(objJson, default=str) + "\n")
-            outFile.flush()
+            if(threadq.qsize()):
+                objJson = threadq.get()
+                outFile.write(json.dumps(objJson, default=str) + "\n")
+                outFile.flush()
             time.sleep(1.0)
+            print("[+] Consumer thread waits for terminate-command...")
         
         if outFile != None:
             outFile.close()
